@@ -10,6 +10,7 @@
  */
 
 import { registerName } from "./nameRegistry";
+import { fragmentBBox, nearestFragmentIndex } from "./ketGeom";
 
 /** Minimal slice of the Ketcher API we use here. */
 export interface MinimalKetcher {
@@ -141,7 +142,7 @@ export function makeMultilineTextNode(lines: string[], x: number, y: number): Ke
 }
 
 /**
- * Stamp a left-aligned, multi-line text block UNDER a molecule on the canvas
+ * Stamp a centered, multi-line text block UNDER a molecule on the canvas
  * (one line per `lines[]` entry). By default the block lands under the LAST
  * molecule fragment; if `matchHeavyAtoms` is given, it prefers the molecule
  * whose `atoms.length === matchHeavyAtoms` so the block sits below the molecule
@@ -204,7 +205,8 @@ export function appendPropertyBlock(
       const bottom = pos.y - LINE * nLines - LINE; // clear the whole block + gap
       if (bottom < belowY) belowY = bottom;
     }
-    ket.root.nodes.push(makeMultilineTextNode(lines, minX, belowY));
+    const centerX = (minX + maxX) / 2;
+    ket.root.nodes.push(makeMultilineTextNode(lines, centerX, belowY));
     await ketcher.setMolecule(JSON.stringify(ket));
   };
   const result = chain.then(run, run);
@@ -226,6 +228,70 @@ export function runOnChain<T>(task: () => Promise<T>): Promise<T> {
   const result = chain.then(task, task);
   chain = result.catch(() => undefined);
   return result;
+}
+
+/**
+ * Replace a molecule's caption(s) with ONE consolidated, centered block.
+ *
+ * Used by "Paste to canvas": the molecule already carries its name caption, so
+ * stamping a separate property block would duplicate the name and read as two
+ * left-aligned blocks. Instead we REMOVE every existing text caption belonging
+ * to the target molecule and drop a single multi-line block (name title +
+ * chosen property rows) centered just below it.
+ *
+ * Target molecule: the fragment whose `atoms.length === matchHeavyAtoms` if
+ * given, else the LAST molecule fragment. "Belongs to" is decided by
+ * `nearestFragmentIndex` over the fragment bounding boxes.
+ *
+ * Serialised on the shared canvas-write chain so it doesn't race other writes.
+ * No-op if there is no editor, no target fragment. If `lines` is empty the old
+ * caption(s) are still removed (no replacement block is added).
+ */
+export function setCaptionBlock(
+  lines: string[],
+  matchHeavyAtoms?: number,
+  ketcher: MinimalKetcher | undefined = currentKetcher(),
+): Promise<void> {
+  return runOnChain(async () => {
+    if (!ketcher) return;
+    const ket = JSON.parse(await ketcher.getKet()) as KetDoc;
+
+    const molRefs = ket.root.nodes
+      .filter((n) => typeof n.$ref === "string")
+      .map((n) => n.$ref as string);
+    if (molRefs.length === 0) return;
+
+    const bboxes = molRefs.map((ref) => fragmentBBox(ket[ref] as KetMolecule | undefined));
+
+    // Choose the target fragment index.
+    let targetIndex = molRefs.length - 1;
+    if (matchHeavyAtoms !== undefined) {
+      const matched = molRefs.findIndex(
+        (ref) => (ket[ref] as KetMolecule | undefined)?.atoms?.length === matchHeavyAtoms,
+      );
+      if (matched !== -1) targetIndex = matched;
+    }
+
+    const targetBBox = bboxes[targetIndex];
+    if (!targetBBox) return; // no positioned target fragment
+
+    // Drop every existing caption that belongs to the target fragment.
+    ket.root.nodes = ket.root.nodes.filter((n) => {
+      if (n.type !== "text") return true;
+      const pos = (n.data as { position?: { x: number; y: number } } | undefined)?.position;
+      if (!pos) return true;
+      return nearestFragmentIndex(pos, bboxes) !== targetIndex;
+    });
+
+    // Add the single consolidated block, centered just below the target.
+    if (lines.length > 0) {
+      const centerX = (targetBBox.minX + targetBBox.maxX) / 2;
+      const belowY = targetBBox.minY - 1.5;
+      ket.root.nodes.push(makeMultilineTextNode(lines, centerX, belowY));
+    }
+
+    await ketcher.setMolecule(JSON.stringify(ket));
+  });
 }
 
 /**

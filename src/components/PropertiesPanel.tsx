@@ -8,7 +8,7 @@ import {
   propertiesToRows,
   type MolProperties,
 } from "@/chem/properties";
-import { appendPropertyBlock } from "@/chem/canvas";
+import { setCaptionBlock } from "@/chem/canvas";
 import { cleanUpCanvas } from "@/chem/layout";
 import { FileImport } from "./FileImport";
 import { NameToStructure } from "./NameToStructure";
@@ -189,13 +189,18 @@ export function PropertiesPanel({ onShowShortcuts }: PropertiesPanelProps = {}) 
 
   async function handlePasteToCanvas() {
     if (!props || checked.size === 0) return;
+    // Build ONE consolidated block: the molecule name as a plain title line
+    // (when known), then each checked property as "Label: value". The "Name"
+    // pseudo-checkbox doesn't drive the on-canvas block — the name is always the
+    // title when known (it still affects Copy-table). setCaptionBlock replaces
+    // the molecule's existing name caption, so there's no duplicate.
     const lines: string[] = [];
-    if (name && checked.has("Name")) lines.push(`Name: ${name}`);
+    if (name) lines.push(name);
     for (const [label, value] of propertiesToRows(props)) {
       if (checked.has(label)) lines.push(`${label}: ${value}`);
     }
     if (lines.length === 0) return;
-    await appendPropertyBlock(lines, props.heavyAtoms);
+    await setCaptionBlock(lines, props.heavyAtoms);
     setPasted(true);
     setTimeout(() => setPasted(false), 1500);
   }

@@ -3,6 +3,8 @@ import {
   appendSmilesToCanvas,
   appendPropertyBlock,
   addCaptionToLastFragment,
+  setCaptionBlock,
+  makeMultilineTextNode,
   type KetDoc,
 } from "@/chem/canvas";
 
@@ -113,8 +115,8 @@ describe("appendPropertyBlock", () => {
     const text = setArg.root.nodes.find((n) => n.type === "text") as {
       data: { position: { x: number; y: number } };
     };
-    // left-aligned with mol1's minX (10), below its minY (-5 - 1.5 = -6.5)
-    expect(text.data.position.x).toBe(10);
+    // centered on mol1 (x = (10 + 12) / 2 = 11), below its minY (-5 - 1.5 = -6.5)
+    expect(text.data.position.x).toBe(11);
     expect(text.data.position.y).toBe(-6.5);
   });
 
@@ -122,5 +124,80 @@ describe("appendPropertyBlock", () => {
     const k = mockKetcher({ root: { nodes: [] } } as unknown as KetDoc);
     await appendPropertyBlock(["X: 1"], undefined, k);
     expect(k.setMolecule).not.toHaveBeenCalled();
+  });
+});
+
+describe("setCaptionBlock", () => {
+  /** KET with one molecule (bbox 0..4) + an existing single-line name caption. */
+  function ketWithNameCaption(): KetDoc {
+    return {
+      root: {
+        nodes: [
+          { $ref: "mol0" },
+          // existing name caption centered below the molecule
+          makeMultilineTextNode(["paracetamol"], 2, -2.5),
+        ],
+      },
+      mol0: {
+        atoms: [
+          { location: [0, 0, 0] },
+          { location: [2, -1, 0] },
+          { location: [4, 0, 0] },
+        ],
+      },
+    } as unknown as KetDoc;
+  }
+
+  it("replaces the molecule's caption with ONE centered block", async () => {
+    const k = mockKetcher(ketWithNameCaption());
+    await setCaptionBlock(["paracetamol", "Formula: C8H9NO2"], 3, k);
+
+    expect(k.setMolecule).toHaveBeenCalledTimes(1);
+    const out = JSON.parse(k.setMolecule.mock.calls[0][0] as string) as KetDoc;
+    const texts = out.root.nodes.filter((n) => n.type === "text") as {
+      data: { content: string; position: { x: number; y: number } };
+    }[];
+
+    // exactly ONE text node (old caption removed, new block added)
+    expect(texts).toHaveLength(1);
+    const block = texts[0];
+    // centered on the fragment: x = (minX 0 + maxX 4) / 2 = 2; below minY(-1) -1.5
+    expect(block.data.position.x).toBe(2);
+    expect(block.data.position.y).toBe(-2.5);
+    // both lines present in the single block
+    expect(block.data.content).toContain("paracetamol");
+    expect(block.data.content).toContain("Formula: C8H9NO2");
+  });
+
+  it("removes the old caption even when lines is empty (no new block)", async () => {
+    const k = mockKetcher(ketWithNameCaption());
+    await setCaptionBlock([], 3, k);
+    const out = JSON.parse(k.setMolecule.mock.calls[0][0] as string) as KetDoc;
+    expect(out.root.nodes.filter((n) => n.type === "text")).toHaveLength(0);
+  });
+
+  it("targets the LAST fragment when matchHeavyAtoms is omitted", async () => {
+    const ket = {
+      root: { nodes: [{ $ref: "mol0" }, { $ref: "mol1" }] },
+      mol0: { atoms: [{ location: [0, 0, 0] }] },
+      mol1: { atoms: [{ location: [10, -5, 0] }, { location: [12, -5, 0] }] },
+    } as unknown as KetDoc;
+    const k = mockKetcher(ket);
+    await setCaptionBlock(["x"], undefined, k);
+    const out = JSON.parse(k.setMolecule.mock.calls[0][0] as string) as KetDoc;
+    const text = out.root.nodes.find((n) => n.type === "text") as {
+      data: { position: { x: number } };
+    };
+    expect(text.data.position.x).toBe(11); // centered over mol1
+  });
+
+  it("is a no-op when there is no molecule node", async () => {
+    const k = mockKetcher({ root: { nodes: [] } } as unknown as KetDoc);
+    await setCaptionBlock(["x"], undefined, k);
+    expect(k.setMolecule).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when there is no editor", async () => {
+    await expect(setCaptionBlock(["x"], undefined, undefined)).resolves.toBeUndefined();
   });
 });

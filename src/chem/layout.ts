@@ -20,78 +20,13 @@ import {
   type KetMolecule,
   type MinimalKetcher,
 } from "./canvas";
+import { fragmentBBox, nearestFragmentIndex, type BBox } from "./ketGeom";
 
-/** Axis-aligned bounding box of a molecule's atom locations. */
-export interface BBox {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
-}
-
-/**
- * Bounding box of a molecule fragment from its atom `location`s. Returns `null`
- * when the fragment has no positioned atoms.
- */
-export function fragmentBBox(mol: KetMolecule | undefined): BBox | null {
-  const atoms = mol?.atoms ?? [];
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const a of atoms) {
-    if (a.location) {
-      xs.push(a.location[0]);
-      ys.push(a.location[1]);
-    }
-  }
-  if (xs.length === 0) return null;
-  return {
-    minX: Math.min(...xs),
-    maxX: Math.max(...xs),
-    minY: Math.min(...ys),
-    maxY: Math.max(...ys),
-  };
-}
-
-/**
- * Index (in the supplied `fragments` order) of the fragment a caption belongs
- * to. We prefer a fragment that (a) horizontally overlaps the text's x and
- * (b) sits ABOVE the text (captions render just below their molecule; smaller y
- * is lower on the canvas, so "above" means the fragment's minY > text y). Among
- * candidates we pick the nearest by distance from the text position to the
- * fragment's bbox center; if none qualify, fall back to the globally nearest
- * fragment. Returns -1 when there are no positioned fragments.
- */
-export function nearestFragmentIndex(
-  textPos: { x: number; y: number },
-  fragments: (BBox | null)[],
-): number {
-  let bestPreferred = -1;
-  let bestPreferredDist = Infinity;
-  let bestAny = -1;
-  let bestAnyDist = Infinity;
-
-  for (let i = 0; i < fragments.length; i++) {
-    const bb = fragments[i];
-    if (!bb) continue;
-    const cx = (bb.minX + bb.maxX) / 2;
-    const cy = (bb.minY + bb.maxY) / 2;
-    const dist = Math.hypot(textPos.x - cx, textPos.y - cy);
-
-    if (dist < bestAnyDist) {
-      bestAnyDist = dist;
-      bestAny = i;
-    }
-
-    const overlapsX = textPos.x >= bb.minX && textPos.x <= bb.maxX;
-    const above = bb.minY > textPos.y; // fragment sits above the caption
-    if (overlapsX && above && dist < bestPreferredDist) {
-      bestPreferredDist = dist;
-      bestPreferred = i;
-    }
-  }
-
-  return bestPreferred !== -1 ? bestPreferred : bestAny;
-}
+// Re-export the geometry helpers so existing import sites (and tests) can keep
+// pulling them from "@/chem/layout". They actually live in ./ketGeom to avoid a
+// canvas.ts ↔ layout.ts import cycle.
+export { fragmentBBox, nearestFragmentIndex };
+export type { BBox };
 
 /**
  * Per-fragment translation that arranges `bboxes` into a `cols`-wide grid.
@@ -230,10 +165,10 @@ export function cleanUpCanvas(
 
       const top = stackBottom[fragIdx];
       const startY = top === undefined ? bb.minY - CAPTION_GAP : top;
-      // Single-line captions (the molecule name) are centred under the
-      // fragment; multi-line blocks (property lists) stay left-aligned so the
-      // "Label: value" rows line up.
-      const x = lines.length === 1 ? (bb.minX + bb.maxX) / 2 : bb.minX;
+      // All captions — single-line names AND multi-line property blocks — are
+      // centred under the fragment so the consolidated name+properties block
+      // reads as one centered title block.
+      const x = (bb.minX + bb.maxX) / 2;
       ket.root.nodes.push(makeMultilineTextNode(lines, x, startY));
       // Next caption under this fragment starts below this whole block + a gap.
       stackBottom[fragIdx] = startY - LINE * lines.length - LINE;
@@ -248,8 +183,8 @@ export function cleanUpCanvas(
 
 /**
  * Re-anchor every `type:"text"` caption in `ket` to its canonical position:
- * centered (single-line) or left-aligned (multi-line) just BELOW its nearest
- * molecule fragment. This keeps name captions SOLID (upright, never mirrored)
+ * centered (single- AND multi-line) just BELOW its nearest molecule fragment.
+ * This keeps name captions SOLID (upright, never mirrored)
  * after the user flips or rotates a molecule — a flip would otherwise mirror a
  * caption's position so it jumps above the molecule, and a rotate would spin it
  * off. We snap each caption back to centered-below afterwards.
@@ -296,9 +231,9 @@ export function reanchorCaptionsInKet(ket: KetDoc): boolean {
     const lines = textNodeLines(node);
     const top = stackBottom[fragIdx];
     const targetY = top === undefined ? bb.minY - CAPTION_GAP : top;
-    // Single-line captions (the molecule name) are centered under the fragment;
-    // multi-line blocks (property lists) stay left-aligned at minX.
-    const targetX = lines.length === 1 ? (bb.minX + bb.maxX) / 2 : bb.minX;
+    // All captions are centered under the fragment — single-line names AND
+    // multi-line property blocks — so the consolidated block stays centered.
+    const targetX = (bb.minX + bb.maxX) / 2;
     // Next caption under this fragment starts below this whole block + a gap.
     stackBottom[fragIdx] = targetY - LINE * lines.length - LINE;
 

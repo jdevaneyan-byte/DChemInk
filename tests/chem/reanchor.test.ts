@@ -75,19 +75,19 @@ describe("reanchorCaptionsInKet", () => {
     expect(y2).toBeLessThan(y1);
   });
 
-  it("left-aligns multi-line captions at minX; single-line are centered", () => {
-    const multi = makeMultilineTextNode(["Label: x", "MW: 46"], 2, 5);
+  it("centers multi-line captions on the fragment center, like single-line", () => {
+    const multi = makeMultilineTextNode(["Label: x", "MW: 46"], 0, 5);
     const ket = makeKet([multi]);
 
     expect(reanchorCaptionsInKet(ket)).toBe(true);
 
     const text = ket.root.nodes.find((n) => n.type === "text") as KetNode;
     const bb = fragmentBBox(ket.mol0 as never)!;
-    // multi-line → left-aligned at minX (0), not centered (2)
-    expect(textPos(text).x).toBe(bb.minX);
-    expect(textPos(text).x).toBe(0);
+    // multi-line → centered on fragment center (2), NOT left-aligned at minX (0)
+    expect(textPos(text).x).toBe((bb.minX + bb.maxX) / 2);
+    expect(textPos(text).x).toBe(2);
 
-    // contrast: single-line centers
+    // single-line centers the same way
     const single = makeMultilineTextNode(["name"], 0, 5);
     const ket2 = makeKet([single]);
     reanchorCaptionsInKet(ket2);
