@@ -1,0 +1,42 @@
+/* Style overrides for Ketcher's built-in UI.
+ * Ketcher ships with CSS Modules — class names are hashed (e.g.
+ * `PeriodTable-module_elementsTable__Vcz12`), so we target with attribute
+ * substring selectors. These must be loaded AFTER `ketcher-react/dist/index.css`
+ * so our rules win without `!important`. */
+
+/* Periodic table modal — Ketcher's default is 520×368, which is cramped on
+ * any modern display. Scale the whole dialog up.
+ *
+ * `zoom` was the cleanest choice: it scales layout (not just visuals) and is
+ * supported in every modern browser including Firefox 126+. Avoids the
+ * transform-origin pitfalls that `scale()` would introduce inside a
+ * fixed-position modal. */
+[class*="PeriodTable-module_elementsTable"] {
+  zoom: 2;
+}
+
+/* Let the hover info-card on element cells render *outside* the dialog body.
+ * Ketcher gives `Dialog-module_body` overflow:hidden, which clips the bottom
+ * of the floating element-info card (atomic mass / electron config line).
+ * The PT dialog has no scrollable content, so freeing overflow is safe and
+ * scoped to this dialog via the parent selector. */
+[class*="PeriodTable-module_elementsTable"] [class*="Dialog-module_body"] {
+  overflow: visible;
+}
+
+/* Safety: bump z-index on any floating tooltip-ish element inside the PT
+ * dialog so it always paints above the colored cells. */
+[class*="PeriodTable-module_elementsTable"] [class*="Tooltip"],
+[class*="PeriodTable-module_elementsTable"] [class*="InfoCard"],
+[class*="PeriodTable-module_elementsTable"] [class*="ElementInfo"],
+[class*="PeriodTable-module_elementsTable"] [class*="Hover"] {
+  z-index: 1000;
+}
+
+/* Counter-zoom the hover/click info card (`AtomInfo`) so it stays at its
+ * original Ketcher size while the surrounding table cells are still
+ * scaled 2x. Without this, the card balloons to 2x as well and starts
+ * blocking the table grid. 0.5 = inverse of the parent's 2.0. */
+[class*="PeriodTable-module_elementsTable"] [class*="AtomInfo-module_ket_atom_info"] {
+  zoom: 0.5;
+}

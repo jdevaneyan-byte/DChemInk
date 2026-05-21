@@ -1,0 +1,7 @@
+onlyBuiltDependencies:
+  - msw
+  - "@rdkit/rdkit"
+
+ignoredBuiltDependencies:
+  - core-js
+  - esbuild

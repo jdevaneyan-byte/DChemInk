@@ -1,0 +1,352 @@
+{
+  "entries": [
+    {
+      "key": "A",
+      "command": "LABELTEXT",
+      "value": "Ac",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "b",
+      "command": "LABELTEXT",
+      "value": "Br",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "B",
+      "command": "LABELTEXT",
+      "value": "B",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "c",
+      "command": "LABELTEXT",
+      "value": "C",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "C",
+      "command": "LABELTEXT",
+      "value": "Cl",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "d",
+      "command": "LABELTEXT",
+      "value": "D",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "e",
+      "command": "LABELTEXT",
+      "value": "Et",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "E",
+      "command": "LABELTEXT",
+      "value": "CO2Me",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "f",
+      "command": "LABELTEXT",
+      "value": "F",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "F",
+      "command": "LABELTEXT",
+      "value": "CF3",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "h",
+      "command": "LABELTEXT",
+      "value": "H",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "H",
+      "command": "LABELTEXT",
+      "value": "Cbz",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "i",
+      "command": "LABELTEXT",
+      "value": "I",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "l",
+      "command": "LABELTEXT",
+      "value": "Cl",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "L",
+      "command": "LABELTEXT",
+      "value": "Li",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "m",
+      "command": "LABELTEXT",
+      "value": "Me",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "M",
+      "command": "LABELTEXT",
+      "value": "MgBr",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "n",
+      "command": "LABELTEXT",
+      "value": "N",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "w",
+      "command": "LABELTEXT",
+      "value": "N",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "N",
+      "command": "LABELTEXT",
+      "value": "NO2",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "o",
+      "command": "LABELTEXT",
+      "value": "O",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "O",
+      "command": "LABELTEXT",
+      "value": "OMe",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "q",
+      "command": "LABELTEXT",
+      "value": "O",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "Q",
+      "command": "LABELTEXT",
+      "value": "Fmoc",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "p",
+      "command": "LABELTEXT",
+      "value": "P",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "P",
+      "command": "LABELTEXT",
+      "value": "Ph",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "r",
+      "command": "LABELTEXT",
+      "value": "R",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "s",
+      "command": "LABELTEXT",
+      "value": "S",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "S",
+      "command": "LABELTEXT",
+      "value": "Si",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "x",
+      "command": "LABELTEXT",
+      "value": "X",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "y",
+      "command": "LABELTEXT",
+      "value": "Boc",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "Z",
+      "command": "LABELTEXT",
+      "value": "N3",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": "!",
+      "command": "LABELTEXT",
+      "value": "?",
+      "description": "Atom Labeling"
+    },
+    {
+      "key": ">",
+      "command": "SPROUT",
+      "value": "?",
+      "description": "Adds bonds to the atom and new atom labels"
+    },
+    {
+      "key": "0",
+      "command": "SPROUT",
+      "value": "0",
+      "description": "Adds a bond to the atom in cyclic mode"
+    },
+    {
+      "key": "1",
+      "command": "SPROUT",
+      "value": "1",
+      "description": "Adds a bond to the atom in linear mode"
+    },
+    {
+      "key": "2",
+      "command": "SPROUT",
+      "value": "2",
+      "description": "Adds carbonyl"
+    },
+    {
+      "key": "3",
+      "command": "SPROUT",
+      "value": "3",
+      "description": "Adds benzene"
+    },
+    {
+      "key": "a",
+      "command": "SPROUT",
+      "value": "3",
+      "description": "Adds benzene"
+    },
+    {
+      "key": "4",
+      "command": "SPROUT",
+      "value": "4",
+      "description": "Adds a chiral up bond"
+    },
+    {
+      "key": "5",
+      "command": "SPROUT",
+      "value": "5",
+      "description": "Adds a chiral down bond"
+    },
+    {
+      "key": "6",
+      "command": "SPROUT",
+      "value": "6",
+      "description": "Adds a cyclohexane"
+    },
+    {
+      "key": "7",
+      "command": "SPROUT",
+      "value": "7",
+      "description": "Adds a cyclopentane"
+    },
+    {
+      "key": "8",
+      "command": "SPROUT",
+      "value": "8",
+      "description": "Adds a methylidene"
+    },
+    {
+      "key": "9",
+      "command": "SPROUT",
+      "value": "9",
+      "description": "Adds a dimethyl"
+    },
+    {
+      "key": "z",
+      "command": "SPROUT",
+      "value": "10",
+      "description": "Adds an alkyne"
+    },
+    {
+      "key": "v",
+      "command": "SPROUT",
+      "value": "11",
+      "description": "Adds a cyclopropyl"
+    },
+    {
+      "key": "u",
+      "command": "SPROUT",
+      "value": "12",
+      "description": "Adds a cyclobutane"
+    },
+    {
+      "key": "K",
+      "command": "SPROUT",
+      "value": "13",
+      "description": "Adds a tertiary butyl"
+    },
+    {
+      "key": ".",
+      "command": "ATTACHMENTPOINT",
+      "value": "True",
+      "description": "Adds an attachment point"
+    },
+    {
+      "key": "k",
+      "command": "SPROUT",
+      "value": "14",
+      "description": "Adds a sulfonyl"
+    },
+    {
+      "key": "j",
+      "command": "SPROUT",
+      "value": "15",
+      "description": "Adds a cyclopentadienyl"
+    },
+    {
+      "key": "J",
+      "command": "SPROUT",
+      "value": "16",
+      "description": "Adds a phenyl"
+    },
+    {
+      "key": "'",
+      "command": "ATOMNUMBER",
+      "value": "True",
+      "description": "Shows Atom Numbers"
+    },
+    {
+      "key": "-",
+      "command": "CHARGE",
+      "value": "-",
+      "description": "Decrement the charge of an atom"
+    },
+    {
+      "key": "+",
+      "command": "CHARGE",
+      "value": "+",
+      "description": "Increments the charge of an atom"
+    },
+    {
+      "key": "g",
+      "command": "SELECT",
+      "value": "h",
+      "description": "Selects the atom with the hotspot"
+    },
+    {
+      "key": "g",
+      "command": "SELECT",
+      "value": "h",
+      "description": "Selects the bond with the hotspot"
+    }
+  ]
+}
