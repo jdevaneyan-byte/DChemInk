@@ -4,6 +4,24 @@ Open-source web-based chemistry drawing tool. Browser-only. No backend, no AI, n
 
 ![DChemInk v0.3 — hotkey help + file import + live properties](docs/screenshot-v0.3.png)
 
+## Built with (and grateful to)
+
+DChemInk is a thin, original UI layer built on top of outstanding open-source
+projects. It would not exist without them:
+
+- **[Ketcher](https://github.com/epam/ketcher)** — © EPAM Systems, **Apache-2.0**.
+  The 2D molecule editor at the core of DChemInk (embedded unmodified). 🙏
+- **[RDKit](https://github.com/rdkit/rdkit) / [RDKit-JS](https://github.com/rdkit/rdkit-js)**
+  — © Greg Landrum & the RDKit contributors, **BSD-3-Clause**. In-browser
+  cheminformatics (formula, descriptors, canonical SMILES).
+- **[PubChem](https://pubchem.ncbi.nlm.nih.gov/)** (NCBI/NIH) — public-domain
+  data, used for name → structure resolution.
+- **React** (MIT), **Vite** (MIT), **TypeScript** (Apache-2.0), **Tailwind CSS**
+  (MIT), **Geist font** (OFL-1.1).
+
+See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for full credits and
+license texts.
+
 ## Develop
 
 ```bash
@@ -33,4 +51,9 @@ Vite + React + TS + Ketcher 2D canvas + RDKit-JS + live PropertiesPanel (MW / fo
 
 ## License
 
-MIT (this code). Ketcher = Apache 2.0; RDKit-JS = BSD-3.
+DChemInk's own source code is licensed under the **MIT License** — see
+[`LICENSE`](LICENSE).
+
+Bundled third-party components keep their own licenses (Ketcher = Apache-2.0,
+RDKit-JS = BSD-3-Clause, …) — see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+These are not relicensed by DChemInk.
