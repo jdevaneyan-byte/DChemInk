@@ -16,6 +16,7 @@ import {
   makeMultilineTextNode,
   textNodeLines,
   type KetDoc,
+  type KetNode,
   type KetMolecule,
   type MinimalKetcher,
 } from "./canvas";
@@ -243,6 +244,77 @@ export function cleanUpCanvas(
   };
 
   return runOnChain(run);
+}
+
+/**
+ * Re-anchor every `type:"text"` caption in `ket` to its canonical position:
+ * centered (single-line) or left-aligned (multi-line) just BELOW its nearest
+ * molecule fragment. This keeps name captions SOLID (upright, never mirrored)
+ * after the user flips or rotates a molecule — a flip would otherwise mirror a
+ * caption's position so it jumps above the molecule, and a rotate would spin it
+ * off. We snap each caption back to centered-below afterwards.
+ *
+ * Mutates `ket` in place and returns `true` iff any text position actually
+ * changed (compared with a small epsilon). Caption content/lines are preserved
+ * exactly; only positions move. Captions with no nearby fragment are left as-is.
+ *
+ * Deterministic and idempotent: the second consecutive run returns `false`,
+ * which is what stops the change → re-anchor → setMolecule → change loop in the
+ * useCaptionAnchor hook.
+ *
+ * v1 limitation: captions can't be manually parked elsewhere — they snap back
+ * below their molecule. A future lock/unlock toggle will allow free placement.
+ */
+export function reanchorCaptionsInKet(ket: KetDoc): boolean {
+  const EPS = 1e-6;
+
+  const molRefs = ket.root.nodes
+    .filter((n) => typeof n.$ref === "string")
+    .map((n) => n.$ref as string);
+  const bboxes = molRefs.map((ref) =>
+    fragmentBBox(ket[ref] as KetMolecule | undefined),
+  );
+
+  let changed = false;
+  // Track the bottom y reached under each fragment so multiple captions sharing
+  // a fragment stack instead of overlapping (mirrors the grid re-anchor).
+  const stackBottom: Record<number, number> = {};
+
+  for (const node of ket.root.nodes) {
+    if (node.type !== "text") continue;
+    const data = node.data as
+      | { position?: { x: number; y: number; z?: number } }
+      | undefined;
+    const pos = data?.position;
+    if (!pos) continue;
+
+    const fragIdx = nearestFragmentIndex(pos, bboxes);
+    if (fragIdx < 0) continue; // no nearby fragment: leave it alone
+    const bb = bboxes[fragIdx];
+    if (!bb) continue;
+
+    const lines = textNodeLines(node);
+    const top = stackBottom[fragIdx];
+    const targetY = top === undefined ? bb.minY - CAPTION_GAP : top;
+    // Single-line captions (the molecule name) are centered under the fragment;
+    // multi-line blocks (property lists) stay left-aligned at minX.
+    const targetX = lines.length === 1 ? (bb.minX + bb.maxX) / 2 : bb.minX;
+    // Next caption under this fragment starts below this whole block + a gap.
+    stackBottom[fragIdx] = targetY - LINE * lines.length - LINE;
+
+    if (
+      Math.abs(pos.x - targetX) > EPS ||
+      Math.abs(pos.y - targetY) > EPS
+    ) {
+      (node as KetNode).data = {
+        ...data,
+        position: { x: targetX, y: targetY, z: pos.z ?? 0 },
+      };
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 // Re-export so test files / callers have a single import surface if desired.
