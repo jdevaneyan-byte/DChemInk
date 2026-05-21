@@ -29,16 +29,22 @@ what's deferred. It supersedes the older week-by-week breakdown.
 - Live properties: formula, MW, exact mass (3 captions)
 
 ### Phase 1 — Chemistry depth (browser-only, all original)
-- 🟡 **P1.1 Full property panel** — expand to ~18 RDKit descriptors (logP,
-  tPSA, HBA, HBD, rotatable bonds, ring/aromatic-ring count, fraction Csp3,
-  heavy atoms, formal charge, …) + copy-as-CSV. *(3/18 today)*
+- ✅ **P1.1 Full property panel** — ~18 RDKit descriptors, per-term glossary
+  modal, compound-name row, copy-as-table (HTML/TSV), and checkbox →
+  paste-selected-properties onto canvas.
 - ✅ **P1.2 Name → structure** — sidebar box + paste-name routing. Uses
   PubChem (online). ⚠️ **Offline/.exe builds need a preloaded local resolver
   (OPSIN + curated trivial-name table) — see `../OFFLINE-PACKAGING.md`.**
-- ⬜ **P1.3 Structure → name (common-names tier)** — our own small curated
-  trivial-name map (authored, ~200 common molecules by InChIKey) +
-  OpenChemLib-JS rule-based fallback where viable. (Full transformer = Tier 1.)
-- ⬜ **P1.4 Clean-up / auto-layout** — Ketcher layout API button.
+- ⏸ **P1.3 Structure → name** — ON HOLD (user decision pending). ChemDraw uses
+  a bundled *algorithmic* IUPAC name generator (offline, no DB). No mature
+  open-source JS equivalent. Options: (a) curated InChIKey→name map + PubChem
+  `Title` lookup (online), (b) curated-only (offline, limited), (c) our own
+  rule-based IUPAC engine from the public IUPAC Blue Book on top of RDKit
+  perception (big, multi-week), (d) STOUT model (Tier-1, self-hosted).
+- ✅ **P1.4 Clean-up / auto-layout** — sidebar "Clean up" (Ketcher/Indigo
+  layout) + "Clean up · grid" (arranges disconnected fragments into a grid).
+  Captions/property-blocks re-anchor to their molecule after layout.
+  *TODO later:* "Straighten" (fix geometry, keep placement) + "De-overlap only".
 
 ### Phase 2 — Power-user UX
 - ⬜ **P2.1 Command palette (Ctrl/Cmd-K)** — name→struct, smart-select, style,
@@ -58,8 +64,20 @@ what's deferred. It supersedes the older week-by-week breakdown.
 
 ### Phase 4 — Integrations
 - ⬜ **P4.1 PubChem/ChEMBL lookup** — public REST, "Lookup" sidebar panel.
-- ⬜ **P4.2 Reaction UI** — arrow + reactant/product slots + conditions panel +
-  atom-count balance check.
+- ⬜ **P4.2 Reaction UI + scheme auto-group / grid-lock** — arrows + reactant/
+  product slots + conditions panel + atom-count balance check, PLUS the
+  requested **annotation auto-grouping & lock** (see `../../../` memory
+  `project-reaction-grouping-lock`):
+  - Write a **compound number** below a structure and **step/conditions** on an
+    arrow; these **auto-associate** with their molecule/arrow by proximity
+    ("this text belongs to this molecule") — no manual grouping (ChemDraw makes
+    you Group manually; auto-grouping is our innovation).
+  - A **lock toggle (lock symbol)**: locked → everything snaps to a grid with
+    even spacing, multi-step rows stay aligned, and a molecule + its labels move
+    together (re-snap/re-place on drop, since Ketcher owns live dragging).
+    Unlocked → free placement, no grouping.
+  - Builds on the existing caption-by-proximity system (P1.1/P1.4). Pairs with
+    P1.4's grid layout. Hover-highlight of a molecule's associated labels.
 - ⬜ **P4.3 ML gateway client (Tier 1)** — REST client + graceful degrade +
   mock gateway + `docker-compose` docs. No models run here.
 
@@ -71,5 +89,9 @@ what's deferred. It supersedes the older week-by-week breakdown.
 - HELM biopolymers
 
 ## Execution order
-P1.1 → P1.2 → P2.2 → P2.1 → P1.4 → P3.1 → P2.3 → P1.3 → P3.3 → P3.2 → P4.1 →
-P4.2 → P4.3. Each ships as its own tested commit.
+Done: ✅ P1.1, ✅ P1.2, ✅ P1.4.
+Next: P2.2 (smart selection) → P2.1 (command palette) → P3.1 (export) →
+P2.3 (nicknames) → P3.3 (PWA) → P3.2 (journal styles) → P4.1 (lookup) →
+P4.2 (reaction UI + scheme auto-group/lock) → P4.3 (ML gateway).
+P1.3 (structure→name) parked pending the approach decision.
+Each ships as its own tested commit.
