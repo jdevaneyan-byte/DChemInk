@@ -229,7 +229,11 @@ export function cleanUpCanvas(
 
       const top = stackBottom[fragIdx];
       const startY = top === undefined ? bb.minY - CAPTION_GAP : top;
-      ket.root.nodes.push(makeMultilineTextNode(lines, bb.minX, startY));
+      // Single-line captions (the molecule name) are centred under the
+      // fragment; multi-line blocks (property lists) stay left-aligned so the
+      // "Label: value" rows line up.
+      const x = lines.length === 1 ? (bb.minX + bb.maxX) / 2 : bb.minX;
+      ket.root.nodes.push(makeMultilineTextNode(lines, x, startY));
       // Next caption under this fragment starts below this whole block + a gap.
       stackBottom[fragIdx] = startY - LINE * lines.length - LINE;
     }

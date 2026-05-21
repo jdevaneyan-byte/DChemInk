@@ -5,6 +5,22 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DChemInk</title>
+    <!--
+      Seed Ketcher's saved options BEFORE the app bundle (and Ketcher) load, so
+      the absolute-stereo "ABS" flag is hidden from the very first render. It
+      drifts off its molecule, can't be deleted, and inflates the bounding box;
+      stereochemistry is still shown by wedge bonds. Doing this in JS after the
+      bundle imports is too late (Ketcher reads the option at module init), and
+      the live editor.options() API corrupts selection rendering — so we seed
+      localStorage here.
+    -->
+    <script>
+      try {
+        var k = JSON.parse(localStorage.getItem('ketcher-opts') || '{}');
+        k.showStereoFlags = false;
+        localStorage.setItem('ketcher-opts', JSON.stringify(k));
+      } catch (e) { /* localStorage unavailable */ }
+    </script>
   </head>
   <body>
     <div id="root"></div>

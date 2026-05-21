@@ -146,8 +146,9 @@ describe("cleanUpCanvas", () => {
     };
     expect(text).toBeDefined();
     expect(text.data.content).toContain("ethanol");
-    // re-anchored under mol0: minX = 0, y = minY(-1) - 1.5 = -2.5
-    expect(text.data.position.x).toBe(0);
+    // re-anchored under mol0, single-line caption is CENTERED:
+    // x = (minX 0 + maxX 4) / 2 = 2; y = minY(-1) - 1.5 = -2.5
+    expect(text.data.position.x).toBe(2);
     expect(text.data.position.y).toBe(-2.5);
   });
 
