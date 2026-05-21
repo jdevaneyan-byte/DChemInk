@@ -71,13 +71,13 @@ describe("appendSmilesToCanvas", () => {
     expect(k.setMolecule).not.toHaveBeenCalled();
   });
 
-  it("adds then re-sets KET with a caption when a label is given", async () => {
+  it("adds then re-sets KET with a caption (capitalized) when a label is given", async () => {
     const k = mockKetcher(ketDoc());
     await appendSmilesToCanvas("CCO", "ethanol", k);
     expect(k.addFragment).toHaveBeenCalledWith("CCO");
     expect(k.getKet).toHaveBeenCalled();
     const setArg = k.setMolecule.mock.calls[0][0] as string;
-    expect(setArg).toContain("ethanol");
+    expect(setArg).toContain("Ethanol"); // first letter capitalized for display
     expect(setArg).toContain('"type":"text"');
   });
 

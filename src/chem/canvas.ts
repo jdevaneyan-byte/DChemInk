@@ -42,6 +42,11 @@ export function currentKetcher(): MinimalKetcher | undefined {
   return (window as unknown as { ketcher?: MinimalKetcher }).ketcher;
 }
 
+/** Capitalise the first letter (rest untouched): "aspirin" → "Aspirin". */
+export function capitalizeFirst(s: string): string {
+  return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 let uid = 0;
 
 /** Build a KET text node (Draft.js raw-content string) at a position. */
@@ -307,13 +312,15 @@ export function appendSmilesToCanvas(
   label?: string,
   ketcher: MinimalKetcher | undefined = currentKetcher(),
 ): Promise<void> {
+  // Display names capitalised (PubChem returns lowercase, e.g. "aspirin").
+  const display = label ? capitalizeFirst(label) : label;
   const run = async (): Promise<void> => {
     if (!ketcher) throw new Error("Editor not ready");
-    if (label) registerName(smiles, label); // remember name for the panel
+    if (display) registerName(smiles, display); // remember name for the panel
     await ketcher.addFragment(smiles);
-    if (label) {
+    if (display) {
       const ket = JSON.parse(await ketcher.getKet()) as KetDoc;
-      addCaptionToLastFragment(ket, label);
+      addCaptionToLastFragment(ket, display);
       await ketcher.setMolecule(JSON.stringify(ket));
     }
   };

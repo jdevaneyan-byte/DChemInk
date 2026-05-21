@@ -41,6 +41,21 @@ export function useCaptionAnchor(): void {
     let disposed = false;
     let subscriber: unknown = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Re-anchor only once the editor goes IDLE. Operations like rotate/flip
+    // fire `change` continuously; running setMolecule mid-rotation replaces the
+    // struct under the active tool and blanks the canvas. A trailing debounce
+    // means we never fire until changes stop (rotation released), regardless of
+    // how the pointer events are delivered.
+    const IDLE_MS = 400;
+    function schedule(): void {
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        if (!disposed) maybeRun();
+      }, IDLE_MS);
+    }
 
     function maybeRun(): void {
       if (!dirty || pointerDown || busy) return;
@@ -65,7 +80,7 @@ export function useCaptionAnchor(): void {
     function onChange(): void {
       try {
         dirty = true;
-        maybeRun();
+        schedule(); // debounced — never runs mid-rotation/drag
       } catch {
         /* swallow */
       }
@@ -76,10 +91,7 @@ export function useCaptionAnchor(): void {
     }
     function onPointerUp(): void {
       pointerDown = false;
-      // Let the edit (flip/rotate/move) settle before re-anchoring.
-      setTimeout(() => {
-        if (!disposed) maybeRun();
-      }, 60);
+      schedule(); // re-anchor once things settle
     }
 
     document.addEventListener("pointerdown", onPointerDown, { capture: true });
@@ -111,6 +123,7 @@ export function useCaptionAnchor(): void {
     return () => {
       disposed = true;
       if (pollTimer !== null) clearInterval(pollTimer);
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
       document.removeEventListener("pointerdown", onPointerDown, {
         capture: true,
       });
