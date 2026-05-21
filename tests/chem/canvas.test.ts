@@ -3,6 +3,7 @@ import {
   appendSmilesToCanvas,
   appendPropertyBlock,
   addCaptionToLastFragment,
+  captionAnchorX,
   setCaptionBlock,
   makeMultilineTextNode,
   type KetDoc,
@@ -29,8 +30,8 @@ describe("addCaptionToLastFragment", () => {
       data: { content: string; position: { x: number; y: number } };
     };
     expect(text).toBeDefined();
-    // center x = (0 + 4) / 2 = 2; below y = min(0,-1,0) - 1.5 = -2.5
-    expect(text.data.position.x).toBe(2);
+    // centered under fragment (0..4) for "ethanol"; y = min(0,-1,0) - 1.5
+    expect(text.data.position.x).toBeCloseTo(captionAnchorX(0, 4, ["ethanol"]), 5);
     expect(text.data.position.y).toBe(-2.5);
     expect(text.data.content).toContain("ethanol");
   });
@@ -45,7 +46,7 @@ describe("addCaptionToLastFragment", () => {
     const text = ket.root.nodes.find((n) => n.type === "text") as {
       data: { position: { x: number } };
     };
-    expect(text.data.position.x).toBe(11); // centered over mol1, not mol0
+    expect(text.data.position.x).toBeCloseTo(captionAnchorX(10, 12, ["second"]), 5); // mol1, not mol0
   });
 
   it("is a no-op when there is no molecule node", () => {
@@ -115,8 +116,8 @@ describe("appendPropertyBlock", () => {
     const text = setArg.root.nodes.find((n) => n.type === "text") as {
       data: { position: { x: number; y: number } };
     };
-    // centered on mol1 (x = (10 + 12) / 2 = 11), below its minY (-5 - 1.5 = -6.5)
-    expect(text.data.position.x).toBe(11);
+    // centered on mol1 for "X: 1"; below its minY (-5 - 1.5 = -6.5)
+    expect(text.data.position.x).toBeCloseTo(captionAnchorX(10, 12, ["X: 1"]), 5);
     expect(text.data.position.y).toBe(-6.5);
   });
 
@@ -161,8 +162,8 @@ describe("setCaptionBlock", () => {
     // exactly ONE text node (old caption removed, new block added)
     expect(texts).toHaveLength(1);
     const block = texts[0];
-    // centered on the fragment: x = (minX 0 + maxX 4) / 2 = 2; below minY(-1) -1.5
-    expect(block.data.position.x).toBe(2);
+    // centered on the fragment (0..4) for the 2-line block; below minY(-1) -1.5
+    expect(block.data.position.x).toBeCloseTo(captionAnchorX(0, 4, ["paracetamol", "Formula: C8H9NO2"]), 5);
     expect(block.data.position.y).toBe(-2.5);
     // both lines present in the single block
     expect(block.data.content).toContain("paracetamol");
@@ -188,7 +189,7 @@ describe("setCaptionBlock", () => {
     const text = out.root.nodes.find((n) => n.type === "text") as {
       data: { position: { x: number } };
     };
-    expect(text.data.position.x).toBe(11); // centered over mol1
+    expect(text.data.position.x).toBeCloseTo(captionAnchorX(10, 12, ["x"]), 5); // centered over mol1
   });
 
   it("is a no-op when there is no molecule node", async () => {

@@ -59,6 +59,14 @@ export function useCaptionAnchor(): void {
 
     function maybeRun(): void {
       if (!dirty || pointerDown || busy) return;
+      // NEVER touch the canvas while Ketcher is actively rotating/moving the
+      // selection — calling setMolecule then replaces the struct under the live
+      // rotate controller and blanks the canvas. Keep `dirty` and retry later.
+      const rc = (window.ketcher as unknown as { editor?: { rotateController?: { isRotating?: boolean; isMovingCenter?: boolean } } } | undefined)?.editor?.rotateController;
+      if (rc?.isRotating || rc?.isMovingCenter) {
+        schedule();
+        return;
+      }
       dirty = false;
       busy = true;
       runOnChain(async () => {

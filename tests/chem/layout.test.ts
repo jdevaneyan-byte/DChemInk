@@ -6,7 +6,7 @@ import {
   cleanUpCanvas,
   type BBox,
 } from "@/chem/layout";
-import type { KetDoc, KetMolecule } from "@/chem/canvas";
+import { captionAnchorX, type KetDoc, type KetMolecule } from "@/chem/canvas";
 
 describe("fragmentBBox", () => {
   it("computes min/max from atom locations", () => {
@@ -146,9 +146,9 @@ describe("cleanUpCanvas", () => {
     };
     expect(text).toBeDefined();
     expect(text.data.content).toContain("ethanol");
-    // re-anchored under mol0, single-line caption is CENTERED:
-    // x = (minX 0 + maxX 4) / 2 = 2; y = minY(-1) - 1.5 = -2.5
-    expect(text.data.position.x).toBe(2);
+    // re-anchored under mol0, single-line caption centered for its width;
+    // y = minY(-1) - 1.5 = -2.5
+    expect(text.data.position.x).toBeCloseTo(captionAnchorX(0, 4, ["ethanol"]), 5);
     expect(text.data.position.y).toBe(-2.5);
   });
 

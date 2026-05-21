@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { reanchorCaptionsInKet, fragmentBBox } from "@/chem/layout";
-import { makeMultilineTextNode, type KetDoc, type KetNode } from "@/chem/canvas";
+import {
+  makeMultilineTextNode,
+  captionAnchorX,
+  type KetDoc,
+  type KetNode,
+} from "@/chem/canvas";
 
 /** A molecule fragment whose bbox is minX=0,maxX=4,minY=-1,maxY=1; center x=2. */
 function mol() {
@@ -35,17 +40,20 @@ describe("reanchorCaptionsInKet", () => {
     const text = ket.root.nodes.find((n) => n.type === "text") as KetNode;
     const pos = textPos(text);
     const bb = fragmentBBox(ket.mol0 as never)!;
-    // single-line caption → centered on fragment center x = 2
-    expect(pos.x).toBe((bb.minX + bb.maxX) / 2);
-    expect(pos.x).toBe(2);
+    // single-line caption → centered under fragment (offset for its width)
+    expect(pos.x).toBeCloseTo(captionAnchorX(bb.minX, bb.maxX, ["ethanol"]), 5);
     // below the molecule: y strictly less than the molecule's minY
     expect(pos.y).toBeLessThan(bb.minY);
     expect(pos.y).toBe(bb.minY - 1.5); // -2.5
   });
 
   it("is idempotent: an already-centered-below caption returns false, unchanged", () => {
-    // minY = -1, gap 1.5 → y = -2.5; centered x = 2.
-    const caption = makeMultilineTextNode(["ethanol"], 2, -2.5);
+    // minY = -1, gap 1.5 → y = -2.5; centered x via the shared helper.
+    const caption = makeMultilineTextNode(
+      ["ethanol"],
+      captionAnchorX(0, 4, ["ethanol"]),
+      -2.5,
+    );
     const ket = makeKet([caption]);
     const before = JSON.stringify(textPos(ket.root.nodes[1] as KetNode));
 
@@ -75,25 +83,26 @@ describe("reanchorCaptionsInKet", () => {
     expect(y2).toBeLessThan(y1);
   });
 
-  it("centers multi-line captions on the fragment center, like single-line", () => {
-    const multi = makeMultilineTextNode(["Label: x", "MW: 46"], 0, 5);
+  it("centers multi-line captions under the fragment (not left-aligned)", () => {
+    const lines = ["Label: x", "MW: 46"];
+    const multi = makeMultilineTextNode(lines, 0, 5);
     const ket = makeKet([multi]);
 
     expect(reanchorCaptionsInKet(ket)).toBe(true);
 
     const text = ket.root.nodes.find((n) => n.type === "text") as KetNode;
     const bb = fragmentBBox(ket.mol0 as never)!;
-    // multi-line → centered on fragment center (2), NOT left-aligned at minX (0)
-    expect(textPos(text).x).toBe((bb.minX + bb.maxX) / 2);
-    expect(textPos(text).x).toBe(2);
+    // multi-line → centered under the fragment for its widest line,
+    // i.e. clearly left of the fragment's left edge is wrong; it's near center.
+    expect(textPos(text).x).toBeCloseTo(captionAnchorX(bb.minX, bb.maxX, lines), 5);
+    expect(textPos(text).x).toBeGreaterThan(bb.minX); // not left-aligned at minX
 
-    // single-line centers the same way
+    // single-line centers for its own width
     const single = makeMultilineTextNode(["name"], 0, 5);
     const ket2 = makeKet([single]);
     reanchorCaptionsInKet(ket2);
     const t2 = ket2.root.nodes.find((n) => n.type === "text") as KetNode;
-    expect(textPos(t2).x).toBe((bb.minX + bb.maxX) / 2);
-    expect(textPos(t2).x).toBe(2);
+    expect(textPos(t2).x).toBeCloseTo(captionAnchorX(bb.minX, bb.maxX, ["name"]), 5);
   });
 
   it("leaves a caption with no nearby fragment untouched (returns false for it)", () => {

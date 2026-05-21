@@ -15,6 +15,7 @@ import {
   runOnChain,
   makeMultilineTextNode,
   textNodeLines,
+  captionAnchorX,
   type KetDoc,
   type KetNode,
   type KetMolecule,
@@ -165,10 +166,9 @@ export function cleanUpCanvas(
 
       const top = stackBottom[fragIdx];
       const startY = top === undefined ? bb.minY - CAPTION_GAP : top;
-      // All captions — single-line names AND multi-line property blocks — are
-      // centred under the fragment so the consolidated name+properties block
-      // reads as one centered title block.
-      const x = (bb.minX + bb.maxX) / 2;
+      // Centered under the fragment (shared helper accounts for Ketcher's
+      // left-anchored text), so creation and re-anchor agree.
+      const x = captionAnchorX(bb.minX, bb.maxX, lines);
       ket.root.nodes.push(makeMultilineTextNode(lines, x, startY));
       // Next caption under this fragment starts below this whole block + a gap.
       stackBottom[fragIdx] = startY - LINE * lines.length - LINE;
@@ -231,9 +231,9 @@ export function reanchorCaptionsInKet(ket: KetDoc): boolean {
     const lines = textNodeLines(node);
     const top = stackBottom[fragIdx];
     const targetY = top === undefined ? bb.minY - CAPTION_GAP : top;
-    // All captions are centered under the fragment — single-line names AND
-    // multi-line property blocks — so the consolidated block stays centered.
-    const targetX = (bb.minX + bb.maxX) / 2;
+    // Centered under the fragment via the shared helper (accounts for
+    // Ketcher's left-anchored text) so this matches the creation site exactly.
+    const targetX = captionAnchorX(bb.minX, bb.maxX, lines);
     // Next caption under this fragment starts below this whole block + a gap.
     stackBottom[fragIdx] = targetY - LINE * lines.length - LINE;
 

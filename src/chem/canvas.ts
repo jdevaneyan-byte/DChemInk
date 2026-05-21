@@ -47,6 +47,22 @@ export function capitalizeFirst(s: string): string {
   return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/** Approx KET-units per text character (Ketcher's caption font ≈ this wide).
+ * Measured: text ≈ 6.5 px/char ÷ ~44 px per KET unit ≈ 0.15. */
+const CHAR_W = 0.15;
+
+/**
+ * X position to anchor a caption so it sits visually CENTERED under a fragment.
+ * Ketcher LEFT-anchors text at the position, so we shift left by half the
+ * widest line's estimated width. Used everywhere captions are placed so the
+ * re-anchor hook doesn't fight the creation site.
+ */
+export function captionAnchorX(minX: number, maxX: number, lines: string[]): number {
+  const center = (minX + maxX) / 2;
+  const maxChars = lines.reduce((m, l) => Math.max(m, l.length), 0);
+  return center - (maxChars * CHAR_W) / 2;
+}
+
 let uid = 0;
 
 /** Build a KET text node (Draft.js raw-content string) at a position. */
@@ -93,7 +109,7 @@ export function addCaptionToLastFragment(ket: KetDoc, label: string): KetDoc {
   }
   if (xs.length === 0) return ket;
 
-  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const cx = captionAnchorX(Math.min(...xs), Math.max(...xs), [label]);
   const belowY = Math.min(...ys) - 1.5; // smaller y renders lower on canvas
   ket.root.nodes.push(makeTextNode(label, cx, belowY));
   return ket;
@@ -210,7 +226,7 @@ export function appendPropertyBlock(
       const bottom = pos.y - LINE * nLines - LINE; // clear the whole block + gap
       if (bottom < belowY) belowY = bottom;
     }
-    const centerX = (minX + maxX) / 2;
+    const centerX = captionAnchorX(minX, maxX, lines);
     ket.root.nodes.push(makeMultilineTextNode(lines, centerX, belowY));
     await ketcher.setMolecule(JSON.stringify(ket));
   };
@@ -290,7 +306,7 @@ export function setCaptionBlock(
 
     // Add the single consolidated block, centered just below the target.
     if (lines.length > 0) {
-      const centerX = (targetBBox.minX + targetBBox.maxX) / 2;
+      const centerX = captionAnchorX(targetBBox.minX, targetBBox.maxX, lines);
       const belowY = targetBBox.minY - 1.5;
       ket.root.nodes.push(makeMultilineTextNode(lines, centerX, belowY));
     }
