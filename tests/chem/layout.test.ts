@@ -6,7 +6,20 @@ import {
   cleanUpCanvas,
   type BBox,
 } from "@/chem/layout";
-import { captionAnchorX, type KetDoc, type KetMolecule } from "@/chem/canvas";
+import {
+  makeCaptionSgroup,
+  CAPTION_FIELD,
+  type KetDoc,
+  type KetMolecule,
+  type KetSgroup,
+} from "@/chem/canvas";
+
+/** Caption Data S-groups on a molecule node. */
+function captionSgroups(mol: KetMolecule | undefined): KetSgroup[] {
+  return (mol?.sgroups ?? []).filter(
+    (sg) => sg.type === "DAT" && sg.fieldName === CAPTION_FIELD,
+  );
+}
 
 describe("fragmentBBox", () => {
   it("computes min/max from atom locations", () => {
@@ -109,29 +122,16 @@ function mockKetcher(ket: KetDoc) {
 }
 
 describe("cleanUpCanvas", () => {
-  it("calls layout and re-anchors the caption under its fragment (text preserved)", async () => {
+  it("calls layout and preserves the molecule's caption S-group", async () => {
     const ket = {
-      root: {
-        nodes: [
-          { $ref: "mol0" },
-          {
-            type: "text",
-            data: {
-              content: JSON.stringify({
-                blocks: [{ text: "ethanol" }],
-                entityMap: {},
-              }),
-              position: { x: 2, y: -3, z: 0 },
-            },
-          },
-        ],
-      },
+      root: { nodes: [{ $ref: "mol0" }] },
       mol0: {
         atoms: [
           { location: [0, 0, 0] },
           { location: [2, -1, 0] },
           { location: [4, 0, 0] },
         ],
+        sgroups: [makeCaptionSgroup("Ethanol", 3)],
       },
     } as unknown as KetDoc;
 
@@ -141,28 +141,27 @@ describe("cleanUpCanvas", () => {
     expect(k.layout).toHaveBeenCalled();
     expect(k.setMolecule).toHaveBeenCalled();
     const out = JSON.parse(k.setMolecule.mock.calls[0][0] as string) as KetDoc;
-    const text = out.root.nodes.find((n) => n.type === "text") as {
-      data: { content: string; position: { x: number; y: number } };
-    };
-    expect(text).toBeDefined();
-    expect(text.data.content).toContain("ethanol");
-    // re-anchored under mol0, single-line caption centered for its width;
-    // y = minY(-1) - 1.5 = -2.5
-    expect(text.data.position.x).toBeCloseTo(captionAnchorX(0, 4, ["ethanol"]), 5);
-    expect(text.data.position.y).toBe(-2.5);
+    // caption stays bound to the molecule (no separate text node involved)
+    const sgs = captionSgroups(out.mol0 as KetMolecule);
+    expect(sgs).toHaveLength(1);
+    expect(sgs[0].fieldData).toBe("Ethanol");
+    expect(out.root.nodes.some((n) => n.type === "text")).toBe(false);
   });
 
   it("is a no-op when no editor is available", async () => {
     await expect(cleanUpCanvas({ grid: false }, undefined)).resolves.toBeUndefined();
   });
 
-  it("translates fragments into a grid when grid: true", async () => {
+  it("translates fragments into a grid; bound caption rides along", async () => {
     const ket = {
       root: {
         nodes: [{ $ref: "mol0" }, { $ref: "mol1" }],
       },
       mol0: { atoms: [{ location: [0, 0, 0] }, { location: [1, 1, 0] }] },
-      mol1: { atoms: [{ location: [0, 0, 0] }, { location: [1, 1, 0] }] },
+      mol1: {
+        atoms: [{ location: [0, 0, 0] }, { location: [1, 1, 0] }],
+        sgroups: [makeCaptionSgroup("Caffeine", 2)],
+      },
     } as unknown as KetDoc;
     const k = mockKetcher(ket);
     await cleanUpCanvas({ grid: true }, k);
@@ -172,5 +171,8 @@ describe("cleanUpCanvas", () => {
     // mol0 stays at anchor; mol1 shifts right by one cell (width 1 + pad 2 = 3).
     expect(fragmentBBox(m0)).toEqual({ minX: 0, maxX: 1, minY: 0, maxY: 1 });
     expect(fragmentBBox(m1)).toEqual({ minX: 3, maxX: 4, minY: 0, maxY: 1 });
+    // mol1's caption S-group is intact after grid translation (it's part of the
+    // molecule node, so moving the atoms moves the caption with it).
+    expect(captionSgroups(m1)[0].fieldData).toBe("Caffeine");
   });
 });

@@ -1,16 +1,24 @@
 /**
  * Canvas append helpers shared by the Name→structure box and the paste-a-name
  * handler, so both ADD a structure (never wipe the canvas) and caption it with
- * its name underneath.
+ * its name.
  *
- * We add via Ketcher's `addFragment` (which keeps existing molecules AND text),
- * then read the KET back, drop a text caption below the newly-added fragment,
- * and re-set the whole KET (preserving everything because the KET is the full
- * document with explicit coordinates).
+ * Captions are bound to the molecule as **Data S-groups** (not loose text
+ * objects). A Data S-group lives INSIDE a molecule node (`molNode.sgroups`),
+ * binds to that molecule's atoms, renders a visible label, and moves / rotates /
+ * flips WITH the molecule — surviving every edit. Because the caption is part of
+ * the molecule (not a separate canvas object), rotating a captioned molecule can
+ * never involve a loose text object, which was the source of the white-screen
+ * rotate crash.
+ *
+ * We add via Ketcher's `addFragment` (which keeps existing molecules), then read
+ * the KET back, push a Data S-group onto the relevant molecule node, and re-set
+ * the whole KET. Ketcher strips custom molecule/atom fields but PRESERVES
+ * sgroups.
  */
 
 import { registerName } from "./nameRegistry";
-import { fragmentBBox, nearestFragmentIndex } from "./ketGeom";
+import { fragmentBBox } from "./ketGeom";
 
 /** Minimal slice of the Ketcher API we use here. */
 export interface MinimalKetcher {
@@ -29,13 +37,67 @@ export interface KetNode {
 export interface KetAtom {
   location?: [number, number, number];
 }
+/** A Data ("DAT") S-group bound to atoms of its containing molecule node. */
+export interface KetSgroup {
+  type: string; // "DAT"
+  atoms: number[]; // atom indices WITHIN this molecule node (0-based)
+  fieldName?: string;
+  fieldData?: string;
+  [key: string]: unknown;
+}
 export interface KetMolecule {
   atoms?: KetAtom[];
+  sgroups?: KetSgroup[];
   stereoFlagPosition?: { x: number; y: number; z: number };
 }
 export interface KetDoc {
   root: { nodes: KetNode[] };
   [key: string]: unknown;
+}
+
+/** Field name used for caption Data S-groups, so we can find/replace our own. */
+export const CAPTION_FIELD = "Name";
+
+/**
+ * Build a Data S-group that binds a `text` label to every atom of a molecule
+ * with `atomCount` atoms (indices 0..atomCount-1, which are per-molecule-node).
+ */
+export function makeCaptionSgroup(text: string, atomCount: number): KetSgroup {
+  return {
+    type: "DAT",
+    atoms: Array.from({ length: atomCount }, (_, i) => i),
+    fieldName: CAPTION_FIELD,
+    fieldData: text,
+  };
+}
+
+/**
+ * Combine caption lines into a single legible S-group label. A Data S-group's
+ * `fieldData` collapses `\n` (renders as one line), and multiple single-line
+ * S-groups all render at the same anchor (overlapping). So for v1 we join the
+ * lines with " · " into ONE bound S-group — prioritising "bound + no crash"
+ * over true multi-line, per the migration plan.
+ */
+export function joinCaptionLines(lines: string[]): string {
+  return lines.filter((l) => l.length > 0).join(" · ");
+}
+
+/**
+ * Drop every caption Data S-group (fieldName === CAPTION_FIELD) from a molecule
+ * node, leaving any other (chemistry) S-groups intact. Returns the molecule.
+ */
+function removeCaptionSgroups(mol: KetMolecule | undefined): void {
+  if (!mol?.sgroups) return;
+  mol.sgroups = mol.sgroups.filter(
+    (sg) => !(sg.type === "DAT" && sg.fieldName === CAPTION_FIELD),
+  );
+}
+
+/** Push a caption S-group onto a molecule node (creating its sgroups array). */
+function addCaptionSgroup(mol: KetMolecule, text: string): void {
+  const count = mol.atoms?.length ?? 0;
+  if (count === 0) return;
+  (mol.sgroups ??= []).push(makeCaptionSgroup(text, count));
 }
 
 export function currentKetcher(): MinimalKetcher | undefined {
@@ -45,195 +107,6 @@ export function currentKetcher(): MinimalKetcher | undefined {
 /** Capitalise the first letter (rest untouched): "aspirin" → "Aspirin". */
 export function capitalizeFirst(s: string): string {
   return s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-/** Approx KET-units per text character (Ketcher's caption font ≈ this wide).
- * Measured: text ≈ 6.5 px/char ÷ ~44 px per KET unit ≈ 0.15. */
-const CHAR_W = 0.15;
-
-/**
- * X position to anchor a caption so it sits visually CENTERED under a fragment.
- * Ketcher LEFT-anchors text at the position, so we shift left by half the
- * widest line's estimated width. Used everywhere captions are placed so the
- * re-anchor hook doesn't fight the creation site.
- */
-export function captionAnchorX(minX: number, maxX: number, lines: string[]): number {
-  const center = (minX + maxX) / 2;
-  const maxChars = lines.reduce((m, l) => Math.max(m, l.length), 0);
-  return center - (maxChars * CHAR_W) / 2;
-}
-
-let uid = 0;
-
-/** Build a KET text node (Draft.js raw-content string) at a position. */
-function makeTextNode(label: string, x: number, y: number): KetNode {
-  const content = JSON.stringify({
-    blocks: [
-      {
-        key: `cap${uid++}`,
-        text: label,
-        type: "unstyled",
-        depth: 0,
-        inlineStyleRanges: [],
-        entityRanges: [],
-        data: {},
-      },
-    ],
-    entityMap: {},
-  });
-  return { type: "text", data: { content, position: { x, y, z: 0 } } } as KetNode;
-}
-
-/**
- * Mutate `ket` in place, adding a `label` caption centered just below the
- * last molecule fragment (the one most recently added — KET keeps disconnected
- * fragments as separate molecule nodes in insertion order). No-op if there is
- * no molecule node or it has no atom coordinates.
- */
-export function addCaptionToLastFragment(ket: KetDoc, label: string): KetDoc {
-  const molRefs = ket.root.nodes
-    .filter((n) => typeof n.$ref === "string")
-    .map((n) => n.$ref as string);
-  if (molRefs.length === 0) return ket;
-
-  const lastRef = molRefs[molRefs.length - 1];
-  const mol = ket[lastRef] as KetMolecule | undefined;
-  const atoms = mol?.atoms ?? [];
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const a of atoms) {
-    if (a.location) {
-      xs.push(a.location[0]);
-      ys.push(a.location[1]);
-    }
-  }
-  if (xs.length === 0) return ket;
-
-  const cx = captionAnchorX(Math.min(...xs), Math.max(...xs), [label]);
-  const belowY = Math.min(...ys) - 1.5; // smaller y renders lower on canvas
-  ket.root.nodes.push(makeTextNode(label, cx, belowY));
-  return ket;
-}
-
-/** How many text lines a KET text node holds (Draft.js block count). */
-export function countTextLines(node: KetNode): number {
-  const content = (node.data as { content?: string } | undefined)?.content;
-  if (!content) return 1;
-  try {
-    const blocks = (JSON.parse(content) as { blocks?: unknown[] }).blocks;
-    return Array.isArray(blocks) && blocks.length > 0 ? blocks.length : 1;
-  } catch {
-    return 1;
-  }
-}
-
-/**
- * Extract the plain-text lines from a KET text node (Draft.js block texts).
- * Falls back to a single empty line if the content can't be parsed.
- */
-export function textNodeLines(node: KetNode): string[] {
-  const content = (node.data as { content?: string } | undefined)?.content;
-  if (!content) return [""];
-  try {
-    const blocks = (JSON.parse(content) as { blocks?: { text?: string }[] }).blocks;
-    if (Array.isArray(blocks) && blocks.length > 0) {
-      return blocks.map((b) => b.text ?? "");
-    }
-  } catch {
-    /* fall through */
-  }
-  return [""];
-}
-
-/** Build a multi-line KET text node (Draft.js raw-content string) at a position. */
-export function makeMultilineTextNode(lines: string[], x: number, y: number): KetNode {
-  const content = JSON.stringify({
-    blocks: lines.map((text) => ({
-      key: `cap${uid++}`,
-      text,
-      type: "unstyled",
-      depth: 0,
-      inlineStyleRanges: [],
-      entityRanges: [],
-      data: {},
-    })),
-    entityMap: {},
-  });
-  return { type: "text", data: { content, position: { x, y, z: 0 } } } as KetNode;
-}
-
-/**
- * Stamp a centered, multi-line text block UNDER a molecule on the canvas
- * (one line per `lines[]` entry). By default the block lands under the LAST
- * molecule fragment; if `matchHeavyAtoms` is given, it prefers the molecule
- * whose `atoms.length === matchHeavyAtoms` so the block sits below the molecule
- * whose properties are shown.
- *
- * Serialised on the same global `chain` as `appendSmilesToCanvas` so it does not
- * race other canvas writes. No-op if `lines` is empty or there is no molecule
- * node.
- */
-export function appendPropertyBlock(
-  lines: string[],
-  matchHeavyAtoms?: number,
-  ketcher: MinimalKetcher | undefined = currentKetcher(),
-): Promise<void> {
-  const run = async (): Promise<void> => {
-    if (lines.length === 0) return;
-    if (!ketcher) return;
-    const ket = JSON.parse(await ketcher.getKet()) as KetDoc;
-
-    const molRefs = ket.root.nodes
-      .filter((n) => typeof n.$ref === "string")
-      .map((n) => n.$ref as string);
-    if (molRefs.length === 0) return;
-
-    let targetRef = molRefs[molRefs.length - 1];
-    if (matchHeavyAtoms !== undefined) {
-      const matched = molRefs.find(
-        (ref) => (ket[ref] as KetMolecule | undefined)?.atoms?.length === matchHeavyAtoms,
-      );
-      if (matched) targetRef = matched;
-    }
-
-    const mol = ket[targetRef] as KetMolecule | undefined;
-    const atoms = mol?.atoms ?? [];
-    const xs: number[] = [];
-    const ys: number[] = [];
-    for (const a of atoms) {
-      if (a.location) {
-        xs.push(a.location[0]);
-        ys.push(a.location[1]);
-      }
-    }
-    if (xs.length === 0) return;
-
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const molBottom = Math.min(...ys);
-    // Start just below the molecule, then drop below any existing text already
-    // sitting under it (e.g. the name caption, or a previous property block) so
-    // the new block doesn't overlap. Smaller y renders lower on the canvas.
-    let belowY = molBottom - 1.5;
-    const LINE = 0.8; // approx text line height in KET units
-    for (const node of ket.root.nodes) {
-      if (node.type !== "text") continue;
-      const pos = (node.data as { position?: { x: number; y: number } } | undefined)
-        ?.position;
-      if (!pos || pos.y >= molBottom) continue; // only text below the molecule
-      if (pos.x < minX - 3 || pos.x > maxX + 3) continue; // roughly under it
-      const nLines = countTextLines(node);
-      const bottom = pos.y - LINE * nLines - LINE; // clear the whole block + gap
-      if (bottom < belowY) belowY = bottom;
-    }
-    const centerX = captionAnchorX(minX, maxX, lines);
-    ket.root.nodes.push(makeMultilineTextNode(lines, centerX, belowY));
-    await ketcher.setMolecule(JSON.stringify(ket));
-  };
-  const result = chain.then(run, run);
-  // Keep the chain alive regardless of whether this call succeeded.
-  chain = result.catch(() => undefined);
-  return result;
 }
 
 // Serialises all canvas appends app-wide: two appends firing within the ~0.7s
@@ -252,21 +125,21 @@ export function runOnChain<T>(task: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Replace a molecule's caption(s) with ONE consolidated, centered block.
+ * Replace a molecule's caption with ONE consolidated, bound Data S-group.
  *
- * Used by "Paste to canvas": the molecule already carries its name caption, so
- * stamping a separate property block would duplicate the name and read as two
- * left-aligned blocks. Instead we REMOVE every existing text caption belonging
- * to the target molecule and drop a single multi-line block (name title +
- * chosen property rows) centered just below it.
+ * Used by "Paste to canvas": the molecule already carries its name caption
+ * S-group, so we REMOVE every existing caption S-group on the target molecule
+ * and push a single new one (name title + chosen property rows, joined into one
+ * legible line — see `joinCaptionLines`). Because the S-group is bound to the
+ * molecule's atoms it moves / rotates / flips with the molecule and never
+ * detaches or jumps to a neighbour.
  *
  * Target molecule: the fragment whose `atoms.length === matchHeavyAtoms` if
- * given, else the LAST molecule fragment. "Belongs to" is decided by
- * `nearestFragmentIndex` over the fragment bounding boxes.
+ * given, else the LAST molecule fragment.
  *
  * Serialised on the shared canvas-write chain so it doesn't race other writes.
- * No-op if there is no editor, no target fragment. If `lines` is empty the old
- * caption(s) are still removed (no replacement block is added).
+ * No-op if there is no editor or no target fragment. If `lines` is empty the
+ * old caption S-group(s) are still removed (no replacement is added).
  */
 export function setCaptionBlock(
   lines: string[],
@@ -282,34 +155,22 @@ export function setCaptionBlock(
       .map((n) => n.$ref as string);
     if (molRefs.length === 0) return;
 
-    const bboxes = molRefs.map((ref) => fragmentBBox(ket[ref] as KetMolecule | undefined));
-
-    // Choose the target fragment index.
-    let targetIndex = molRefs.length - 1;
+    // Choose the target fragment.
+    let targetRef = molRefs[molRefs.length - 1];
     if (matchHeavyAtoms !== undefined) {
-      const matched = molRefs.findIndex(
+      const matched = molRefs.find(
         (ref) => (ket[ref] as KetMolecule | undefined)?.atoms?.length === matchHeavyAtoms,
       );
-      if (matched !== -1) targetIndex = matched;
+      if (matched) targetRef = matched;
     }
 
-    const targetBBox = bboxes[targetIndex];
-    if (!targetBBox) return; // no positioned target fragment
+    const mol = ket[targetRef] as KetMolecule | undefined;
+    if (!mol || fragmentBBox(mol) === null) return; // no positioned target
 
-    // Drop every existing caption that belongs to the target fragment.
-    ket.root.nodes = ket.root.nodes.filter((n) => {
-      if (n.type !== "text") return true;
-      const pos = (n.data as { position?: { x: number; y: number } } | undefined)?.position;
-      if (!pos) return true;
-      return nearestFragmentIndex(pos, bboxes) !== targetIndex;
-    });
-
-    // Add the single consolidated block, centered just below the target.
-    if (lines.length > 0) {
-      const centerX = captionAnchorX(targetBBox.minX, targetBBox.maxX, lines);
-      const belowY = targetBBox.minY - 1.5;
-      ket.root.nodes.push(makeMultilineTextNode(lines, centerX, belowY));
-    }
+    // Replace this molecule's caption S-group(s) so re-pasting never stacks.
+    removeCaptionSgroups(mol);
+    const text = joinCaptionLines(lines);
+    if (text.length > 0) addCaptionSgroup(mol, text);
 
     await ketcher.setMolecule(JSON.stringify(ket));
   });
@@ -317,7 +178,8 @@ export function setCaptionBlock(
 
 /**
  * Add a SMILES fragment to the canvas WITHOUT wiping existing content. If
- * `label` is given, a caption with that text is placed below the new fragment.
+ * `label` is given, a caption Data S-group with that text is bound to the new
+ * fragment (so it moves/rotates/flips with the molecule).
  *
  * Calls are serialised globally so concurrent adds queue rather than race.
  *
@@ -336,8 +198,18 @@ export function appendSmilesToCanvas(
     await ketcher.addFragment(smiles);
     if (display) {
       const ket = JSON.parse(await ketcher.getKet()) as KetDoc;
-      addCaptionToLastFragment(ket, display);
-      await ketcher.setMolecule(JSON.stringify(ket));
+      // Bind the name to the JUST-ADDED fragment: the LAST molecule node. Its
+      // atoms array is its own 0-based index space, so the S-group atom indices
+      // are [0..count-1] of that node.
+      const molRefs = ket.root.nodes
+        .filter((n) => typeof n.$ref === "string")
+        .map((n) => n.$ref as string);
+      const lastRef = molRefs[molRefs.length - 1];
+      const mol = lastRef ? (ket[lastRef] as KetMolecule | undefined) : undefined;
+      if (mol && (mol.atoms?.length ?? 0) > 0) {
+        addCaptionSgroup(mol, display);
+        await ketcher.setMolecule(JSON.stringify(ket));
+      }
     }
   };
   const result = chain.then(run, run);

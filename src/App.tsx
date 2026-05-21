@@ -4,7 +4,6 @@ import { PropertiesPanel } from "@/components/PropertiesPanel";
 import { HotkeysHelpOverlay } from "@/hotkeys/HotkeysHelpOverlay";
 import { useHotkeys } from "@/hotkeys/useHotkeys";
 import { useKetcherHover } from "@/hotkeys/useKetcherHover";
-import { useCaptionAnchor } from "@/hotkeys/useCaptionAnchor";
 import { usePasteToStructure } from "@/hotkeys/usePasteToStructure";
 import type { PasteStatus } from "@/hotkeys/usePasteToStructure";
 
@@ -41,7 +40,6 @@ export default function App() {
   }, []);
 
   useKetcherHover();
-  useCaptionAnchor();
   useHotkeys({ onShowHelp: () => setHelpOpen(true) });
   usePasteToStructure({ onStatus });
 

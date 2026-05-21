@@ -3,21 +3,17 @@
  *   - plain: Ketcher's native `layout()` (Indigo default fragment spacing).
  *   - grid:  layout(), then arrange disconnected fragments into a tidy grid.
  *
- * `layout()` regenerates 2D coords offline. It preserves text nodes and
- * fragment order, but it MOVES molecules while leaving text where it was — so
- * captions become detached. We record which fragment each caption belongs to
- * BEFORE layout, then re-anchor a fresh caption under that (possibly moved)
- * fragment afterwards. Serialised on the same write chain as canvas appends.
+ * `layout()` regenerates 2D coords offline. Captions are now bound Data
+ * S-groups living INSIDE each molecule node, so they translate WITH the
+ * fragment automatically during grid arrangement and survive `layout()` — there
+ * is no longer any separate text node to record or re-anchor. Serialised on the
+ * same write chain as canvas appends.
  */
 
 import {
   currentKetcher,
   runOnChain,
-  makeMultilineTextNode,
-  textNodeLines,
-  captionAnchorX,
   type KetDoc,
-  type KetNode,
   type KetMolecule,
   type MinimalKetcher,
 } from "./canvas";
@@ -91,13 +87,13 @@ function translateFragment(mol: KetMolecule, dx: number, dy: number): void {
 
 const GRID_COLS = 3;
 const GRID_PAD = 2;
-const CAPTION_GAP = 1.5; // gap below a fragment before the first caption line
-const LINE = 0.8; // approx KET text line height
 
 /**
  * Re-lay-out the canvas. With `grid: true`, also pack disconnected fragments
- * into a 3-column grid. In both cases captions are re-anchored under their
- * original molecule. No-op when the editor isn't ready or has no fragments.
+ * into a 3-column grid. Captions are bound Data S-groups inside each molecule
+ * node, so they translate WITH their fragment automatically — no separate
+ * re-anchor step is needed. No-op when the editor isn't ready or has no
+ * fragments.
  */
 export function cleanUpCanvas(
   opts: { grid: boolean },
@@ -106,38 +102,20 @@ export function cleanUpCanvas(
   const run = async (): Promise<void> => {
     if (!ketcher) return;
 
-    // 1. Read pre-layout KET and record caption→fragment associations.
-    const preKet = JSON.parse(await ketcher.getKet()) as KetDoc;
-    const preMolRefs = preKet.root.nodes
-      .filter((n) => typeof n.$ref === "string")
-      .map((n) => n.$ref as string);
-    const preBBoxes = preMolRefs.map((ref) =>
-      fragmentBBox(preKet[ref] as KetMolecule | undefined),
-    );
-
-    const textNodes = preKet.root.nodes.filter((n) => n.type === "text");
-    // assoc[textIndex] = fragmentIndex (or -1); also keep each caption's lines.
-    const assoc: number[] = [];
-    const captionLines: string[][] = [];
-    for (const t of textNodes) {
-      const pos = (t.data as { position?: { x: number; y: number } } | undefined)
-        ?.position;
-      assoc.push(pos ? nearestFragmentIndex(pos, preBBoxes) : -1);
-      captionLines.push(textNodeLines(t));
-    }
-
-    // 2. Native layout (preserves fragment order and text nodes).
+    // 1. Native layout (regenerates 2D coords; preserves fragment order and
+    //    each molecule's sgroups, i.e. our bound captions).
     if (typeof ketcher.layout === "function") {
       await ketcher.layout();
     }
 
-    // 3. Read post-layout KET. Fragment order is preserved, so assoc still maps.
+    // 2. Read post-layout KET.
     const ket = JSON.parse(await ketcher.getKet()) as KetDoc;
     const molRefs = ket.root.nodes
       .filter((n) => typeof n.$ref === "string")
       .map((n) => n.$ref as string);
 
-    // 4. Optional grid arrangement: translate each fragment into its cell.
+    // 3. Optional grid arrangement: translate each fragment into its cell. The
+    //    caption S-group rides along because it's part of the molecule node.
     if (opts.grid) {
       const bboxes = molRefs.map((ref) =>
         fragmentBBox(ket[ref] as KetMolecule | undefined),
@@ -151,105 +129,11 @@ export function cleanUpCanvas(
       }
     }
 
-    // 5. Drop the stale text nodes; we'll re-anchor fresh ones.
-    ket.root.nodes = ket.root.nodes.filter((n) => n.type !== "text");
-
-    // 6. Re-anchor captions under their (possibly moved) fragment, stacking
-    //    multiple captions under the same fragment so they don't overlap.
-    const stackBottom: Record<number, number> = {};
-    for (let t = 0; t < textNodes.length; t++) {
-      const fragIdx = assoc[t];
-      const lines = captionLines[t];
-      if (fragIdx < 0 || fragIdx >= molRefs.length) continue;
-      const bb = fragmentBBox(ket[molRefs[fragIdx]] as KetMolecule | undefined);
-      if (!bb) continue;
-
-      const top = stackBottom[fragIdx];
-      const startY = top === undefined ? bb.minY - CAPTION_GAP : top;
-      // Centered under the fragment (shared helper accounts for Ketcher's
-      // left-anchored text), so creation and re-anchor agree.
-      const x = captionAnchorX(bb.minX, bb.maxX, lines);
-      ket.root.nodes.push(makeMultilineTextNode(lines, x, startY));
-      // Next caption under this fragment starts below this whole block + a gap.
-      stackBottom[fragIdx] = startY - LINE * lines.length - LINE;
-    }
-
-    // 7. Commit.
+    // 4. Commit.
     await ketcher.setMolecule(JSON.stringify(ket));
   };
 
   return runOnChain(run);
-}
-
-/**
- * Re-anchor every `type:"text"` caption in `ket` to its canonical position:
- * centered (single- AND multi-line) just BELOW its nearest molecule fragment.
- * This keeps name captions SOLID (upright, never mirrored)
- * after the user flips or rotates a molecule — a flip would otherwise mirror a
- * caption's position so it jumps above the molecule, and a rotate would spin it
- * off. We snap each caption back to centered-below afterwards.
- *
- * Mutates `ket` in place and returns `true` iff any text position actually
- * changed (compared with a small epsilon). Caption content/lines are preserved
- * exactly; only positions move. Captions with no nearby fragment are left as-is.
- *
- * Deterministic and idempotent: the second consecutive run returns `false`,
- * which is what stops the change → re-anchor → setMolecule → change loop in the
- * useCaptionAnchor hook.
- *
- * v1 limitation: captions can't be manually parked elsewhere — they snap back
- * below their molecule. A future lock/unlock toggle will allow free placement.
- */
-export function reanchorCaptionsInKet(ket: KetDoc): boolean {
-  const EPS = 1e-6;
-
-  const molRefs = ket.root.nodes
-    .filter((n) => typeof n.$ref === "string")
-    .map((n) => n.$ref as string);
-  const bboxes = molRefs.map((ref) =>
-    fragmentBBox(ket[ref] as KetMolecule | undefined),
-  );
-
-  let changed = false;
-  // Track the bottom y reached under each fragment so multiple captions sharing
-  // a fragment stack instead of overlapping (mirrors the grid re-anchor).
-  const stackBottom: Record<number, number> = {};
-
-  for (const node of ket.root.nodes) {
-    if (node.type !== "text") continue;
-    const data = node.data as
-      | { position?: { x: number; y: number; z?: number } }
-      | undefined;
-    const pos = data?.position;
-    if (!pos) continue;
-
-    const fragIdx = nearestFragmentIndex(pos, bboxes);
-    if (fragIdx < 0) continue; // no nearby fragment: leave it alone
-    const bb = bboxes[fragIdx];
-    if (!bb) continue;
-
-    const lines = textNodeLines(node);
-    const top = stackBottom[fragIdx];
-    const targetY = top === undefined ? bb.minY - CAPTION_GAP : top;
-    // Centered under the fragment via the shared helper (accounts for
-    // Ketcher's left-anchored text) so this matches the creation site exactly.
-    const targetX = captionAnchorX(bb.minX, bb.maxX, lines);
-    // Next caption under this fragment starts below this whole block + a gap.
-    stackBottom[fragIdx] = targetY - LINE * lines.length - LINE;
-
-    if (
-      Math.abs(pos.x - targetX) > EPS ||
-      Math.abs(pos.y - targetY) > EPS
-    ) {
-      (node as KetNode).data = {
-        ...data,
-        position: { x: targetX, y: targetY, z: pos.z ?? 0 },
-      };
-      changed = true;
-    }
-  }
-
-  return changed;
 }
 
 // Re-export so test files / callers have a single import surface if desired.
