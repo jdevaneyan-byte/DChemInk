@@ -12,22 +12,23 @@
 import { registerName } from "./nameRegistry";
 
 /** Minimal slice of the Ketcher API we use here. */
-interface MinimalKetcher {
+export interface MinimalKetcher {
   addFragment(structStr: string): Promise<void | undefined>;
   getKet(): Promise<string>;
   setMolecule(structStr: string): Promise<void | undefined>;
+  layout?(): Promise<void | undefined>;
 }
 
 /** Loosely-typed KET document. */
-interface KetNode {
+export interface KetNode {
   $ref?: string;
   type?: string;
   data?: { content?: string; position?: { x: number; y: number; z?: number } };
 }
-interface KetAtom {
+export interface KetAtom {
   location?: [number, number, number];
 }
-interface KetMolecule {
+export interface KetMolecule {
   atoms?: KetAtom[];
   stereoFlagPosition?: { x: number; y: number; z: number };
 }
@@ -36,7 +37,7 @@ export interface KetDoc {
   [key: string]: unknown;
 }
 
-function currentKetcher(): MinimalKetcher | undefined {
+export function currentKetcher(): MinimalKetcher | undefined {
   return (window as unknown as { ketcher?: MinimalKetcher }).ketcher;
 }
 
@@ -93,7 +94,7 @@ export function addCaptionToLastFragment(ket: KetDoc, label: string): KetDoc {
 }
 
 /** How many text lines a KET text node holds (Draft.js block count). */
-function countTextLines(node: KetNode): number {
+export function countTextLines(node: KetNode): number {
   const content = (node.data as { content?: string } | undefined)?.content;
   if (!content) return 1;
   try {
@@ -104,8 +105,26 @@ function countTextLines(node: KetNode): number {
   }
 }
 
+/**
+ * Extract the plain-text lines from a KET text node (Draft.js block texts).
+ * Falls back to a single empty line if the content can't be parsed.
+ */
+export function textNodeLines(node: KetNode): string[] {
+  const content = (node.data as { content?: string } | undefined)?.content;
+  if (!content) return [""];
+  try {
+    const blocks = (JSON.parse(content) as { blocks?: { text?: string }[] }).blocks;
+    if (Array.isArray(blocks) && blocks.length > 0) {
+      return blocks.map((b) => b.text ?? "");
+    }
+  } catch {
+    /* fall through */
+  }
+  return [""];
+}
+
 /** Build a multi-line KET text node (Draft.js raw-content string) at a position. */
-function makeMultilineTextNode(lines: string[], x: number, y: number): KetNode {
+export function makeMultilineTextNode(lines: string[], x: number, y: number): KetNode {
   const content = JSON.stringify({
     blocks: lines.map((text) => ({
       key: `cap${uid++}`,
@@ -197,6 +216,17 @@ export function appendPropertyBlock(
 // Serialises all canvas appends app-wide: two appends firing within the ~0.7s
 // name-resolution window would otherwise race (read-modify-write of the KET).
 let chain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Enqueue a read-modify-write task on the shared canvas-write chain so it does
+ * not race other canvas mutations (appends, captions, layout). The chain stays
+ * alive whether or not `task` resolves or rejects.
+ */
+export function runOnChain<T>(task: () => Promise<T>): Promise<T> {
+  const result = chain.then(task, task);
+  chain = result.catch(() => undefined);
+  return result;
+}
 
 /**
  * Add a SMILES fragment to the canvas WITHOUT wiping existing content. If

@@ -9,6 +9,7 @@ import {
   type MolProperties,
 } from "@/chem/properties";
 import { appendPropertyBlock } from "@/chem/canvas";
+import { cleanUpCanvas } from "@/chem/layout";
 import { FileImport } from "./FileImport";
 import { NameToStructure } from "./NameToStructure";
 import { PropertyInfoModal } from "./PropertyInfoModal";
@@ -95,6 +96,7 @@ export function PropertiesPanel({ onShowShortcuts }: PropertiesPanelProps = {}) 
   const [nameOpen, setNameOpen] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [pasted, setPasted] = useState(false);
+  const [cleanedUp, setCleanedUp] = useState<false | "plain" | "grid">(false);
 
   function toggleChecked(label: string) {
     setChecked((prev) => {
@@ -198,6 +200,13 @@ export function PropertiesPanel({ onShowShortcuts }: PropertiesPanelProps = {}) 
     setTimeout(() => setPasted(false), 1500);
   }
 
+  async function handleCleanUp(grid: boolean) {
+    if (!window.ketcher) return;
+    await cleanUpCanvas({ grid });
+    setCleanedUp(grid ? "grid" : "plain");
+    setTimeout(() => setCleanedUp(false), 1200);
+  }
+
   return (
     <aside className="w-72 border-l p-4 text-sm bg-white space-y-4">
       <FileImport />
@@ -215,6 +224,29 @@ export function PropertiesPanel({ onShowShortcuts }: PropertiesPanelProps = {}) 
         </span>
         <kbd className="px-1.5 py-0.5 border rounded text-xs text-slate-500">?</kbd>
       </button>
+      <div className="space-y-1.5">
+        <h2 className="font-semibold">Layout</h2>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleCleanUp(false)}
+            data-testid="cleanup-button"
+            title="Re-lay-out the drawing using Ketcher's clean layout"
+            className="flex-1 px-1.5 py-0.5 text-[11px] leading-none border rounded hover:bg-slate-50 text-slate-600 whitespace-nowrap"
+          >
+            {cleanedUp === "plain" ? "Done" : "Clean up"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleCleanUp(true)}
+            data-testid="cleanup-grid-button"
+            title="Clean up, then arrange separate molecules into a grid"
+            className="flex-1 px-1.5 py-0.5 text-[11px] leading-none border rounded hover:bg-slate-50 text-slate-600 whitespace-nowrap"
+          >
+            {cleanedUp === "grid" ? "Done" : "Clean up · grid"}
+          </button>
+        </div>
+      </div>
       <div
         className="text-xs text-slate-500 font-mono"
         data-testid="hover-indicator"
