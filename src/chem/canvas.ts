@@ -100,6 +100,35 @@ function addCaptionSgroup(mol: KetMolecule, text: string): void {
   (mol.sgroups ??= []).push(makeCaptionSgroup(text, count));
 }
 
+/** True if a molecule node already carries a caption Data S-group. */
+function hasCaptionSgroup(mol: KetMolecule | undefined): boolean {
+  return (mol?.sgroups ?? []).some(
+    (sg) => sg.type === "DAT" && sg.fieldName === CAPTION_FIELD,
+  );
+}
+
+/** Refs of all molecule (`$ref`) nodes in document order. */
+function moleculeRefs(ket: KetDoc): string[] {
+  return ket.root.nodes
+    .filter((n) => typeof n.$ref === "string")
+    .map((n) => n.$ref as string);
+}
+
+/**
+ * Position signature of a fragment — its atom locations rounded and joined.
+ * Used to spot the JUST-ADDED fragment after `addFragment` (its signature won't
+ * match any pre-existing fragment). `addFragment` leaves existing fragments'
+ * coordinates in place, so this reliably distinguishes even identical molecules
+ * (they sit at different positions).
+ */
+function fragmentSignature(mol: KetMolecule | undefined): string {
+  return (mol?.atoms ?? [])
+    .map((a) =>
+      a.location ? `${a.location[0].toFixed(2)},${a.location[1].toFixed(2)}` : "?",
+    )
+    .join("|");
+}
+
 export function currentKetcher(): MinimalKetcher | undefined {
   return (window as unknown as { ketcher?: MinimalKetcher }).ketcher;
 }
@@ -195,17 +224,32 @@ export function appendSmilesToCanvas(
   const run = async (): Promise<void> => {
     if (!ketcher) throw new Error("Editor not ready");
     if (display) registerName(smiles, display); // remember name for the panel
+
+    // Snapshot existing fragments BEFORE adding, so we can identify the
+    // newly-added one afterwards. The new fragment is NOT reliably the last
+    // molecule node — Ketcher orders nodes by position, so adding a 2nd
+    // identical molecule can leave the OLD one last (which caused the caption
+    // to land on the wrong molecule: one with two names, the other with none).
+    const preSigs = new Set<string>();
+    if (display) {
+      const preKet = JSON.parse(await ketcher.getKet()) as KetDoc;
+      for (const ref of moleculeRefs(preKet)) {
+        preSigs.add(fragmentSignature(preKet[ref] as KetMolecule));
+      }
+    }
+
     await ketcher.addFragment(smiles);
+
     if (display) {
       const ket = JSON.parse(await ketcher.getKet()) as KetDoc;
-      // Bind the name to the JUST-ADDED fragment: the LAST molecule node. Its
-      // atoms array is its own 0-based index space, so the S-group atom indices
-      // are [0..count-1] of that node.
-      const molRefs = ket.root.nodes
-        .filter((n) => typeof n.$ref === "string")
-        .map((n) => n.$ref as string);
-      const lastRef = molRefs[molRefs.length - 1];
-      const mol = lastRef ? (ket[lastRef] as KetMolecule | undefined) : undefined;
+      const refs = moleculeRefs(ket);
+      // Target = the fragment whose atom-position signature is new; else the
+      // first node lacking a caption S-group; else the last node.
+      const targetRef =
+        refs.find((r) => !preSigs.has(fragmentSignature(ket[r] as KetMolecule))) ??
+        refs.find((r) => !hasCaptionSgroup(ket[r] as KetMolecule)) ??
+        refs[refs.length - 1];
+      const mol = targetRef ? (ket[targetRef] as KetMolecule | undefined) : undefined;
       if (mol && (mol.atoms?.length ?? 0) > 0) {
         addCaptionSgroup(mol, display);
         await ketcher.setMolecule(JSON.stringify(ket));

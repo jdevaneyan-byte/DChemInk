@@ -83,19 +83,34 @@ describe("appendSmilesToCanvas", () => {
     expect(out.root.nodes.some((n) => n.type === "text")).toBe(false);
   });
 
-  it("binds the S-group to the LAST molecule node when several exist", async () => {
-    const ket = {
-      root: { nodes: [{ $ref: "mol0" }, { $ref: "mol1" }] },
-      mol0: { atoms: [{ location: [0, 0, 0] }] },
-      mol1: { atoms: [{ location: [10, -10, 0] }, { location: [12, -10, 0] }] },
+  it("captions the NEWLY-ADDED fragment, not a pre-existing one (even when it's not last)", async () => {
+    // mol0 already exists (captioned "First"); addFragment introduces mol1 at a
+    // new position. getKet returns pre (mol0 only) then post (mol0 + mol1).
+    const pre = {
+      root: { nodes: [{ $ref: "mol0" }] },
+      mol0: {
+        atoms: [{ location: [10, -10, 0] }, { location: [12, -10, 0] }],
+        sgroups: [makeCaptionSgroup("First", 2)],
+      },
     } as unknown as KetDoc;
-    const k = mockKetcher(ket);
+    const post = {
+      root: { nodes: [{ $ref: "mol0" }, { $ref: "mol1" }] },
+      mol0: pre.mol0,
+      mol1: { atoms: [{ location: [0, 0, 0] }, { location: [1, 0, 0] }] }, // new
+    } as unknown as KetDoc;
+
+    let call = 0;
+    const k = {
+      addFragment: vi.fn<(s: string) => Promise<void>>(async () => {}),
+      getKet: vi.fn(async () => JSON.stringify(call++ === 0 ? pre : post)),
+      setMolecule: vi.fn<(s: string) => Promise<void>>(async () => {}),
+      layout: vi.fn<() => Promise<void>>(async () => {}),
+    };
     await appendSmilesToCanvas("CC", "second", k);
     const out = JSON.parse(k.setMolecule.mock.calls[0][0] as string) as KetDoc;
-    // mol1 (the last node) carries the caption; mol0 does not
-    expect(captionSgroups(out.mol1 as KetMolecule)).toHaveLength(1);
-    expect(captionSgroups(out.mol0 as KetMolecule)).toHaveLength(0);
-    expect(captionSgroups(out.mol1 as KetMolecule)[0].atoms).toEqual([0, 1]);
+    // the NEW fragment (mol1) gets the caption; the pre-existing mol0 keeps its one
+    expect(captionSgroups(out.mol1 as KetMolecule).map((s) => s.fieldData)).toEqual(["Second"]);
+    expect(captionSgroups(out.mol0 as KetMolecule).map((s) => s.fieldData)).toEqual(["First"]);
   });
 
   it("throws when no editor is available", async () => {
