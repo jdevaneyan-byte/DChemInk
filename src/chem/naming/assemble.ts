@@ -51,8 +51,15 @@ function prefixSegment(subs: { locant: number; name: string }[]): string {
 }
 
 /** Build the unsaturation ending, e.g. "ane", "-2-ene", "a-1,3-diene", "-1-en-4-yne". */
-function ending(stem: string, doubles: number[], triples: number[]): string {
+function ending(stem: string, chainLen: number, doubles: number[], triples: number[]): string {
   if (doubles.length === 0 && triples.length === 0) return `${stem}ane`;
+
+  // On a 2-carbon chain the single double/triple bond can only be at locant 1,
+  // which is degenerate and omitted: "ethene"/"ethyne" (not "eth-1-ene"). Longer
+  // chains keep the locant even when unique (e.g. PubChem's "prop-1-ene").
+  if (chainLen === 2) {
+    return doubles.length ? `${stem}ene` : `${stem}yne`;
+  }
 
   const segs: string[] = [];
   // The 'a' euphonic linker appears before multiplied suffixes (diene, triene, diyne).
@@ -76,7 +83,7 @@ function ending(stem: string, doubles: number[], triples: number[]): string {
 
 export function assembleName(input: AssemblyInput): string {
   const stem = parentStem(input.chainLen);
-  const parentName = ending(stem, input.doubles, input.triples);
+  const parentName = ending(stem, input.chainLen, input.doubles, input.triples);
   if (input.subs.length === 0) return parentName;
   // Prefix block appended directly to parent name (no separator before parent).
   // e.g. "2-methyl" + "butane" = "2-methylbutane"

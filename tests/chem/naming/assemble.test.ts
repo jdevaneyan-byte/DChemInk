@@ -10,6 +10,14 @@ describe("assembleName", () => {
   it("names a single ene with its locant", () => {
     expect(assembleName({ chainLen: 5, doubles: [2], triples: [], subs: [] })).toBe("pent-2-ene");
   });
+  it("omits the degenerate locant on a 2-carbon chain (ethene/ethyne)", () => {
+    // On 2 carbons the unsaturation can only be at position 1, so the locant is
+    // omitted (matches PubChem: C=C -> ethene, C#C -> ethyne). prop-1-ene KEEPS
+    // its locant, so the omission is specific to the 2-carbon stem.
+    expect(assembleName({ chainLen: 2, doubles: [1], triples: [], subs: [] })).toBe("ethene");
+    expect(assembleName({ chainLen: 2, doubles: [], triples: [1], subs: [] })).toBe("ethyne");
+    expect(assembleName({ chainLen: 3, doubles: [1], triples: [], subs: [] })).toBe("prop-1-ene");
+  });
   it("inserts the -a- linker for dienes", () => {
     expect(assembleName({ chainLen: 4, doubles: [1, 3], triples: [], subs: [] })).toBe("buta-1,3-diene");
   });
