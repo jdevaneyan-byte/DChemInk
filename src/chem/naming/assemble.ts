@@ -39,7 +39,25 @@ function displayName(name: string): string {
   return isComplex(name) ? `(${name})` : name;
 }
 
-function prefixSegment(subs: { locant: number; name: string }[]): string {
+/**
+ * Whether prefix locants should be omitted for a given group.
+ *
+ * Locants are omitted when they add no information:
+ * - chainLen = 1 (methane parent): all substituents are at position 1 (forced).
+ * - chainLen = 2, all locants are 1, and there is only ONE distinct prefix name
+ *   (a single terminal substituent on ethane is unambiguous — both ends are
+ *   equivalent when the chain is otherwise unsubstituted at this position).
+ *
+ * This gives: "chloroethane" (not "1-chloroethane"), "methoxyethane" (not
+ * "1-methoxyethane"), "trifluoromethane" (not "1,1,1-trifluoromethane").
+ */
+function omitPrefixLocants(locants: number[], chainLen: number, allUniqueSubs: number): boolean {
+  if (chainLen === 1) return true; // methane: always at position 1
+  if (chainLen === 2 && locants.every((l) => l === 1) && allUniqueSubs === 1) return true;
+  return false;
+}
+
+function prefixSegment(subs: { locant: number; name: string }[], chainLen?: number): string {
   const groups = new Map<string, number[]>();
   for (const s of subs) {
     const arr = groups.get(s.name) ?? [];
@@ -53,8 +71,15 @@ function prefixSegment(subs: { locant: number; name: string }[]): string {
     const ka = alphaKey(a.name), kb = alphaKey(b.name);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
+  const numUniqueSubs = parts.length;
   return parts
-    .map((p) => `${p.locants.join(",")}-${multiplierPrefix(p.locants.length)}${displayName(p.name)}`)
+    .map((p) => {
+      const omit = chainLen !== undefined && omitPrefixLocants(p.locants, chainLen, numUniqueSubs);
+      if (omit) {
+        return `${multiplierPrefix(p.locants.length)}${displayName(p.name)}`;
+      }
+      return `${p.locants.join(",")}-${multiplierPrefix(p.locants.length)}${displayName(p.name)}`;
+    })
     .join("-");
 }
 
@@ -111,7 +136,8 @@ function suffixStartsWithVowel(kind: SuffixKind, multi: number): boolean {
  * Omit locants for:
  * - Terminal groups that can ONLY appear at position 1 (acid, al, nitrile, amide
  *   when the group is at a chain end and there's only one occurrence).
- * - Any suffix on a 2-carbon chain where the position is forced (ethanamine).
+ * - Any suffix on a 2-carbon chain where the position is forced (ethanamine, ethanol).
+ * - Any suffix on a 1-carbon chain (methanol → methanol, no locant possible).
  */
 function omitSuffixLocants(kind: SuffixKind, locants: number[], chainLen: number): boolean {
   if (locants.length > 1) {
@@ -121,8 +147,11 @@ function omitSuffixLocants(kind: SuffixKind, locants: number[], chainLen: number
   // Single occurrence:
   // Terminal-only suffixes always at position 1 (or last): no locant needed
   if (kind === "al" || kind === "oic acid" || kind === "nitrile" || kind === "amide") return true;
-  // amine on a 2-carbon chain: ethanamine (degenerate, only at 1)
-  if (kind === "amine" && chainLen === 2) return true;
+  // On a 2-carbon chain the suffix can only be at locant 1 (PCG-lowest rule forces it
+  // to the lower end), so the locant is degenerate and omitted.
+  // e.g. ethanol (not ethan-1-ol), ethanamine (not ethan-1-amine).
+  // Similarly for a 1-carbon parent (methanol, methanamine).
+  if (chainLen <= 2 && locants[0] === 1) return true;
   // ol/one/amine on longer chains: cite the locant
   return false;
 }
@@ -178,5 +207,5 @@ export function assembleName(input: AssemblyInput): string {
   // Prefix block appended directly to parent name (no separator before parent).
   // e.g. "2-methyl" + "butane" = "2-methylbutane"
   // e.g. "4-ethyl-2,2-dimethyl" + "hexane" = "4-ethyl-2,2-dimethylhexane"
-  return `${prefixSegment(input.subs)}${name}`;
+  return `${prefixSegment(input.subs, input.chainLen)}${name}`;
 }

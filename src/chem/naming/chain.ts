@@ -71,7 +71,13 @@ export function allCarbonChains(cg: CarbonGraph): number[][] {
 /** All maximal-length carbon chains (each as an ordered atom-index array). */
 export function longestCarbonChains(cg: CarbonGraph): number[][] {
   const all = allCarbonChains(cg);
-  if (all.length === 0) return cg.carbons.length === 1 ? [[cg.carbons[0]]] : [];
+  if (all.length === 0) {
+    // No C-C paths (e.g. ether-only connectivity, or single carbon).
+    // Return each connected component's representative as a 1-carbon chain,
+    // choosing the component with the most carbons (all isolated → all length 1).
+    if (cg.carbons.length === 0) return [];
+    return cg.carbons.map((c) => [c]);
+  }
   const best = Math.max(...all.map((p) => p.length));
   return all.filter((p) => p.length === best);
 }
@@ -199,10 +205,19 @@ export function selectPrincipalChain(cg: CarbonGraph, opts?: SelectPrincipalChai
   let pool: number[][];
   if (pcg.size > 0) {
     const all = allCarbonChains(cg);
-    const maxPcg = Math.max(...all.map((p) => countPcgOnPath(p, pcg)));
-    const withPcg = all.filter((p) => countPcgOnPath(p, pcg) === maxPcg);
-    const maxLen = Math.max(...withPcg.map((p) => p.length));
-    pool = withPcg.filter((p) => p.length === maxLen);
+    if (all.length === 0) {
+      // No C-C paths (e.g. ether-bridged disconnected C fragments, or single C).
+      // Use longestCarbonChains which handles isolated nodes → single-element chains.
+      // Then filter to those containing a PCG carbon.
+      const singles = longestCarbonChains(cg);
+      const withPcg = singles.filter((p) => countPcgOnPath(p, pcg) > 0);
+      pool = withPcg.length > 0 ? withPcg : singles;
+    } else {
+      const maxPcg = Math.max(...all.map((p) => countPcgOnPath(p, pcg)));
+      const withPcg = all.filter((p) => countPcgOnPath(p, pcg) === maxPcg);
+      const maxLen = Math.max(...withPcg.map((p) => p.length));
+      pool = withPcg.filter((p) => p.length === maxLen);
+    }
   } else {
     pool = longestCarbonChains(cg);
   }
