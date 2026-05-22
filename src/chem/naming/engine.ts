@@ -230,7 +230,6 @@ function acidStem(chainLen: number, doubles: number[], triples: number[], subs: 
  * be a simple alkyl substituent (no heteroatoms, no double/triple bonds to branches).
  */
 function describeAcylChain(
-  graph: MolGraph,
   cg: CarbonGraph,
   acylCarbonIdx: number,
   groupAtomSet: Set<number>,
@@ -432,7 +431,7 @@ export function nameMolecule(graph: MolGraph): NameResult {
         if (pcgAcylHalides.length === 1) {
           // Single acyl halide
           const g = pcgAcylHalides[0];
-          const chain = describeAcylChain(graph, cg, g.carbon, groupAtomSet);
+          const chain = describeAcylChain(cg, g.carbon, groupAtomSet);
           if (!chain) return { name: null, status: "unsupported", reason: "acyl chain not expressible" };
 
           // Completeness: all carbons in chain + all group atoms must cover all heavy atoms
@@ -560,7 +559,7 @@ export function nameMolecule(graph: MolGraph): NameResult {
         const bridgeOIdx = g.atoms[1];
 
         // Describe the acyl chain (from g.carbon = acylCarbonIdx)
-        const acylChain = describeAcylChain(graph, cg, g.carbon, groupAtomSet);
+        const acylChain = describeAcylChain(cg, g.carbon, groupAtomSet);
         if (!acylChain) return { name: null, status: "unsupported", reason: "ester acyl chain not expressible" };
 
         // Describe the O-alkyl chain (from bridgeOIdx)
@@ -609,8 +608,8 @@ export function nameMolecule(graph: MolGraph): NameResult {
         const c2Idx = Number(g.detail);
 
         // Describe both acyl chains
-        const chain1 = describeAcylChain(graph, cg, c1Idx, groupAtomSet);
-        const chain2 = describeAcylChain(graph, cg, c2Idx, groupAtomSet);
+        const chain1 = describeAcylChain(cg, c1Idx, groupAtomSet);
+        const chain2 = describeAcylChain(cg, c2Idx, groupAtomSet);
         if (!chain1 || !chain2) return { name: null, status: "unsupported", reason: "anhydride acyl chain not expressible" };
 
         // Completeness
