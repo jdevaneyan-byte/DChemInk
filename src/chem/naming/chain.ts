@@ -1,5 +1,6 @@
 // src/chem/naming/chain.ts
 import { compareLocants, type MolGraph } from "./graph";
+import { nameSubstituent } from "./substituent";
 
 export interface CarbonGraph {
   carbons: number[];                    // carbon atom indices
@@ -102,15 +103,65 @@ function countMultipleBonds(path: number[], cg: CarbonGraph): number {
   return n;
 }
 
+/** Double-bond-only locant set for a directed path. */
+function doubleBondLocants(path: number[], cg: CarbonGraph): number[] {
+  const locs: number[] = [];
+  for (let i = 0; i < path.length - 1; i++) {
+    if (ccOrder(cg, path[i], path[i + 1]) === 2) locs.push(i + 1);
+  }
+  return locs;
+}
+
+/** Alphabetization key matching assemble.ts: first letter of the full name. */
+function alphaKey(name: string): string {
+  return name.replace(/^\((.*)\)$/, "$1").replace(/^[\d,()\-\s]+/, "");
+}
+
+/** Ordered (by alphabetical name) substituent locants for a directed path. */
+function substituentsByAlpha(path: number[], cg: CarbonGraph): { locant: number; key: string }[] {
+  const inChain = new Set(path);
+  const out: { locant: number; key: string }[] = [];
+  for (let i = 0; i < path.length; i++) {
+    for (const nb of cg.adj.get(path[i]) ?? []) {
+      if (!inChain.has(nb)) out.push({ locant: i + 1, key: alphaKey(nameSubstituent(cg, nb, path[i])) });
+    }
+  }
+  return out.sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : x.locant - y.locant));
+}
+
+/**
+ * Final alphabetical tie-break: the substituent cited first alphabetically must
+ * receive the lower locant. Returns <0 if `path` wins, >0 if `rev` wins, 0 tie.
+ */
+function compareByFirstAlpha(path: number[], rev: number[], cg: CarbonGraph): number {
+  const a = substituentsByAlpha(path, cg);
+  const b = substituentsByAlpha(rev, cg);
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    if (a[i].key !== b[i].key) return a[i].key < b[i].key ? -1 : 1;
+    if (a[i].locant !== b[i].locant) return a[i].locant < b[i].locant ? -1 : 1;
+  }
+  return 0;
+}
+
 /** Pick the better numbering direction of one candidate chain. */
 function orient(path: number[], cg: CarbonGraph): number[] {
   const rev = [...path].reverse();
   const a = { mb: multipleBondLocants(path, cg), sub: substituentLocants(path, cg) };
   const b = { mb: multipleBondLocants(rev, cg), sub: substituentLocants(rev, cg) };
+  // 1. Lower locants to the combined set of multiple bonds.
   const byMb = compareLocants(a.mb, b.mb);
   if (byMb !== 0) return byMb < 0 ? path : rev;
+  // 2. Bug 4: on a combined-set tie, double bonds (ene) get the lower locants.
+  const byEne = compareLocants(doubleBondLocants(path, cg), doubleBondLocants(rev, cg));
+  if (byEne !== 0) return byEne < 0 ? path : rev;
+  // 3. Lower locants to the substituent set.
   const bySub = compareLocants(a.sub, b.sub);
-  return bySub <= 0 ? path : rev;
+  if (bySub !== 0) return bySub < 0 ? path : rev;
+  // 4. Bug 3: on a substituent-set tie, the alphabetically-first substituent
+  //    gets the lower locant.
+  const byAlpha = compareByFirstAlpha(path, rev, cg);
+  return byAlpha <= 0 ? path : rev;
 }
 
 export function selectPrincipalChain(cg: CarbonGraph): ChainChoice {
@@ -122,7 +173,11 @@ export function selectPrincipalChain(cg: CarbonGraph): ChainChoice {
     if (mb !== 0) return mb;
     const subCount = substituentLocants(q, cg).length - substituentLocants(p, cg).length;
     if (subCount !== 0) return subCount; // more substituents first
-    return compareLocants(substituentLocants(p, cg), substituentLocants(q, cg));
+    const bySub = compareLocants(substituentLocants(p, cg), substituentLocants(q, cg));
+    if (bySub !== 0) return bySub;
+    // Final tie-break: prefer the chain giving the alphabetically-first
+    // substituent the lower locant.
+    return compareByFirstAlpha(p, q, cg);
   });
   return { atoms: candidates[0] };
 }
