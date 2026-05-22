@@ -157,12 +157,9 @@ describe("nameMolecule (Tier 2 end-to-end)", () => {
   });
 
   // ── Rejections ───────────────────────────────────────────────────────────────
-  // Note: CC(=O)OC (ester) end-to-end naming is tested in engine.tier2b.test.ts
-  // (requires engine routing, added in Task 3). Here we just check structural rejection.
-  it("CC(=O)OC (ester) → unsupported until engine routing (task 3)", () => {
-    // The engine doesn't yet route esters; completeness guard fires.
-    // This test is replaced by a proper named test in engine.tier2b.test.ts after Task 3.
-    expect(status("CC(=O)OC")).toBe("unsupported");
+  it("CC(=O)OC (ester) → methyl ethanoate (Tier 2b implemented; PubChem: methyl acetate, retained)", () => {
+    // Engine routing added in Task 3. PubChem: "methyl acetate" (retained); we assert systematic.
+    expect(name("CC(=O)OC")).toBe("methyl ethanoate");
   });
   it("c1ccccc1 (ring) → unsupported mentioning ring", () => {
     expect(status("c1ccccc1")).toBe("unsupported");

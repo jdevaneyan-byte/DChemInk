@@ -238,8 +238,8 @@ export function acylName(chainLen: number, doubles: number[], triples: number[],
   const parentName = ending(stem, chainLen, doubles, triples);
   // Convert to acyl: drop trailing 'e' (if present) and append 'oyl'.
   // All endings (ane/ene/yne) end in 'e', so e-elision always applies.
-  let base = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
-  let acyl = base + "oyl";
+  const base = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
+  const acyl = base + "oyl";
   if (subs.length === 0) return acyl;
   return `${prefixSegment(subs, chainLen)}${acyl}`;
 }
@@ -271,11 +271,9 @@ export function esterName(alkyl: string, acidChainLen: number, doubles: number[]
   const stem = parentStem(acidChainLen);
   const parentName = ending(stem, acidChainLen, doubles, triples);
   // e-elision before '-oate' (starts with 'o')
-  let base = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
-  let acidStem = base + "oate";
-  if (subs.length > 0) {
-    acidStem = `${prefixSegment(subs, acidChainLen)}${acidStem}`;
-  }
+  const base = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
+  const acidStemBase = base + "oate";
+  const acidStem = subs.length > 0 ? `${prefixSegment(subs, acidChainLen)}${acidStemBase}` : acidStemBase;
   return `${alkyl} ${acidStem}`;
 }
 
