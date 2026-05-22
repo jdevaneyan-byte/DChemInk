@@ -111,6 +111,31 @@ export function perceiveGroups(graph: MolGraph): Perception {
     // Collect the remaining neighbours of the carbonyl carbon (not the =O)
     const otherNbs = nbs.filter((b) => b.to !== oDouble.index);
 
+    // Acyl halide: a carbonyl carbon bonded to a halogen (R-C(=O)-X). Two-part /
+    // functional-class names — deferred to T2b with esters & anhydrides.
+    const acylHalide = otherNbs.find(
+      (b) => b.order === 1 && HALOGEN_PREFIX[atomsById.get(b.to)?.element ?? ""],
+    );
+    if (acylHalide) {
+      return {
+        groups: [],
+        unsupported: "contains an acyl halide — arrives in T2b (next milestone)",
+      };
+    }
+
+    // Carbonic-acid derivatives — a carbonyl carbon bearing TWO or more
+    // single-bonded heteroatoms (urea N-C(=O)-N, carbamate N-C(=O)-O, carbonate
+    // O-C(=O)-O, carbamic acid). Specialized functional-class names — not yet supported.
+    const heteroSingles = otherNbs.filter(
+      (b) => b.order === 1 && ["O", "N"].includes(atomsById.get(b.to)?.element ?? ""),
+    );
+    if (heteroSingles.length >= 2) {
+      return {
+        groups: [],
+        unsupported: "contains a carbonic-acid derivative (urea/carbamate/…) — not yet supported",
+      };
+    }
+
     // Look for single-bonded O or N among other neighbors
     const singleO = otherNbs.find((b) => b.order === 1 && atomsById.get(b.to)?.element === "O");
     const singleN = otherNbs.find((b) => b.order === 1 && atomsById.get(b.to)?.element === "N");

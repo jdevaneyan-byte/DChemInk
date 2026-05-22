@@ -168,6 +168,26 @@ describe("nameMolecule (Tier 2 end-to-end)", () => {
   it("CC(=O)[O-] (charged) → unsupported", () => {
     expect(status("CC(=O)[O-]")).toBe("unsupported");
   });
+  // Dual carbon-bearing groups: acid (senior) is the suffix, nitrile demotes to a
+  // cyano PREFIX whose carbon leaves the parent chain (not double-counted).
+  // Round-trips through OPSIN to the original structure.
+  it("N#CC#CC(=O)O (cyano-ynoic acid) → 3-cyanoprop-2-ynoic acid", () => {
+    expect(name("N#CC#CC(=O)O")).toBe("3-cyanoprop-2-ynoic acid");
+  });
+  // Atom-completeness guard: N-substituted (secondary/tertiary) amines aren't
+  // expressible yet (no N-locants), so we DECLINE rather than drop the N-substituent.
+  it("CNC (dimethylamine) → unsupported, not 'methanamine'", () => {
+    expect(status("CNC")).toBe("unsupported");
+  });
+  // An on-chain enol IS nameable (vinyl alcohol). PubChem/OPSIN: C=CO → ethenol.
+  it("C=CO → ethenol (on-chain C=C, named not declined)", () => {
+    expect(name("C=CO")).toBe("ethenol");
+  });
+  // Multiple-bond guard: a vinyl branch stranded off the acid's parent chain
+  // can't be expressed (no alkenyl substituents yet) → declined, not mis-named.
+  it("C=CC(C=C)C(=O)O (off-chain C=C) → unsupported", () => {
+    expect(status("C=CC(C=C)C(=O)O")).toBe("unsupported");
+  });
 });
 
 // Tier-1 regression: the original engine test corpus must still pass through nameMolecule

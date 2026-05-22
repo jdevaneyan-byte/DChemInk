@@ -1,6 +1,6 @@
 // src/chem/naming/engine.ts
 import type { MolGraph, NameResult } from "./graph";
-import { buildCarbonGraph, ccOrder, selectPrincipalChain } from "./chain";
+import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } from "./chain";
 import { nameSubstituent } from "./substituent";
 import { assembleName, type SuffixKind } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
@@ -96,9 +96,11 @@ function etherPrefixFor(graph: MolGraph, etherGroup: Group, chainCarbons: Set<nu
   // is the chain carbon. The OTHER C side is the alkoxy substituent.
   const oAtom = etherGroup.atoms[0]; // the O atom index
   const bonds = graph.bonds.filter((b) => b.from === oAtom || b.to === oAtom);
+  // The alkoxy side is the O-carbon that is NOT on the main chain (regardless of
+  // which carbon perception happened to record as the anchor).
   const otherC = bonds
     .map((b) => (b.from === oAtom ? b.to : b.from))
-    .find((idx) => idx !== etherGroup.carbon && !chainCarbons.has(idx));
+    .find((idx) => !chainCarbons.has(idx));
   if (otherC === undefined) {
     // Both C sides are in chain — shouldn't happen in a well-formed ether;
     // use anchor C as fallback.
@@ -124,6 +126,64 @@ function etherPrefixFor(graph: MolGraph, etherGroup: Group, chainCarbons: Set<nu
   ];
   const n = alkylCarbons.length;
   return n >= 1 && n < stems.length ? `${stems[n]}oxy` : "alkoxy";
+}
+
+/** Full-graph neighbour indices of an atom. */
+function neighborsOf(graph: MolGraph, idx: number): number[] {
+  const out: number[] = [];
+  for (const b of graph.bonds) {
+    if (b.from === idx) out.push(b.to);
+    else if (b.to === idx) out.push(b.from);
+  }
+  return out;
+}
+
+/** Carbons reachable from `start` over C–C bonds without entering `chainSet`. */
+function branchCarbons(cg: CarbonGraph, start: number, chainSet: Set<number>): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  const stack = [start];
+  while (stack.length) {
+    const u = stack.pop()!;
+    if (seen.has(u) || chainSet.has(u)) continue;
+    seen.add(u);
+    out.push(u);
+    for (const v of cg.adj.get(u) ?? []) if (!seen.has(v) && !chainSet.has(v)) stack.push(v);
+  }
+  return out;
+}
+
+/**
+ * Atoms on the alkoxy side of an ether (the O plus the other-side carbons), but
+ * ONLY when exactly one O-carbon is on the chain and the other side is a simple
+ * unbranched saturated carbon chain — all our `etherPrefixFor` can express.
+ * Returns null otherwise, so the caller leaves the atoms unaccounted and the
+ * molecule is declined rather than mis-named.
+ */
+function etherAlkoxyAtoms(graph: MolGraph, etherO: number, chainSet: Set<number>): Set<number> | null {
+  const cNbrs = neighborsOf(graph, etherO);
+  if (cNbrs.filter((n) => chainSet.has(n)).length !== 1) return null;
+  const otherC = cNbrs.find((n) => !chainSet.has(n));
+  if (otherC === undefined) return null;
+  const set = new Set<number>([etherO]);
+  const seen = new Set<number>([etherO]);
+  const stack = [otherC];
+  while (stack.length) {
+    const u = stack.pop()!;
+    if (seen.has(u)) continue;
+    seen.add(u);
+    set.add(u);
+    if (graph.atoms.find((a) => a.index === u)?.element !== "C") return null; // hetero on alkoxy
+    for (const v of neighborsOf(graph, u)) if (!seen.has(v)) stack.push(v);
+  }
+  for (const c of set) {
+    if (c === etherO) continue;
+    if (neighborsOf(graph, c).filter((n) => set.has(n)).length > 2) return null; // branched
+  }
+  for (const b of graph.bonds) {
+    if (set.has(b.from) && set.has(b.to) && b.order > 1) return null; // unsaturated alkoxy
+  }
+  return set;
 }
 
 export function nameMolecule(graph: MolGraph): NameResult {
@@ -178,6 +238,26 @@ export function nameMolecule(graph: MolGraph): NameResult {
     const pcgGroups = pcgKind ? groups.filter((g) => g.kind === pcgKind) : [];
     const pcgCarbons = pcgGroups.map((g) => g.carbon);
 
+    // Non-principal groups that carry their OWN carbon become carbon-bearing
+    // prefixes (nitrile→cyano, acid→carboxy, amide→carbamoyl). That carbon is
+    // part of the SUBSTITUENT, not the parent chain, so exclude it from chain
+    // selection — e.g. HOOC–C≡C–C≡N is 3-cyanoprop-2-ynoic acid, not
+    // 4-cyanobut-2-ynoic acid (which would double-count the nitrile carbon).
+    const CARBON_PREFIX = new Set<GroupKind>(["nitrile", "acid", "amide"]);
+    const excludedCarbons = new Set<number>();
+    if (pcgKind) {
+      for (const g of groups) {
+        if (g.kind !== pcgKind && CARBON_PREFIX.has(g.kind)) excludedCarbons.add(g.carbon);
+      }
+    }
+    if (excludedCarbons.size > 0) {
+      cg.carbons = cg.carbons.filter((c) => !excludedCarbons.has(c));
+      for (const c of excludedCarbons) cg.adj.delete(c);
+      for (const [, list] of cg.adj) {
+        for (let i = list.length - 1; i >= 0; i--) if (excludedCarbons.has(list[i])) list.splice(i, 1);
+      }
+    }
+
     // For chain selection, if we have a PCG use its anchors; otherwise use all
     // group anchor carbons so the chain orientation minimises their locants too.
     const chainPrefCarbons = pcgCarbons.length > 0
@@ -224,18 +304,20 @@ export function nameMolecule(graph: MolGraph): NameResult {
     // Add FG prefix substituents
     for (let gi = 0; gi < nonPcgGroups.length; gi++) {
       const g = nonPcgGroups[gi];
-      const locant = chain.indexOf(g.carbon) + 1;
-      if (locant === 0) {
-        // PCG anchor not on chain (shouldn't happen with proper chain selection)
+      if (g.kind === "ether") {
+        // Anchor the ether at whichever of its two carbons is on the main chain.
+        const onChain = neighborsOf(graph, g.atoms[0]).find((n) => inChain.has(n));
+        if (onChain === undefined) continue; // both sides off-chain → completeness guard declines
+        subs.push({ locant: chain.indexOf(onChain) + 1, name: etherResolved.get(gi) ?? "alkoxy" });
         continue;
       }
-      let pname: string;
-      if (g.kind === "ether") {
-        pname = etherResolved.get(gi) ?? "alkoxy";
-      } else {
-        pname = prefixForm(g);
-      }
-      subs.push({ locant, name: pname });
+      // Carbon-bearing prefixes (cyano/carboxy/carbamoyl) sit on their chain
+      // neighbour, since their own carbon was excluded from the chain.
+      const anchor = CARBON_PREFIX.has(g.kind)
+        ? neighborsOf(graph, g.carbon).find((n) => inChain.has(n))
+        : (inChain.has(g.carbon) ? g.carbon : undefined);
+      if (anchor === undefined) continue; // off-chain → completeness guard declines
+      subs.push({ locant: chain.indexOf(anchor) + 1, name: prefixForm(g) });
     }
 
     // Add alkyl branch substituents (carbons off-chain not belonging to any group)
@@ -245,6 +327,61 @@ export function nameMolecule(graph: MolGraph): NameResult {
           subs.push({ locant: i + 1, name: nameSubstituent(cg, nb, chain[i]) });
         }
       }
+    }
+
+    // ── Completeness guard ──────────────────────────────────────────────────
+    // Every heavy atom must be expressed by the name: a main-chain atom, an atom
+    // of a group whose anchor is on the chain, an atom of a simple alkoxy side,
+    // or a carbon in an alkyl branch. If any heavy atom is left unaccounted (a
+    // dropped N-substituent, a substituent on an ether/alkoxy carbon, an enol
+    // OH, …) we DECLINE rather than emit a name that silently omits atoms.
+    const accounted = new Set<number>(chain);
+    for (const g of groups) {
+      if (g.kind === "ether") {
+        const alk = etherAlkoxyAtoms(graph, g.atoms[0], inChain);
+        if (alk) for (const a of alk) accounted.add(a);
+        continue;
+      }
+      if (inChain.has(g.carbon)) {
+        for (const a of g.atoms) accounted.add(a);
+      } else if (excludedCarbons.has(g.carbon) && neighborsOf(graph, g.carbon).some((n) => inChain.has(n))) {
+        // Carbon-bearing prefix attached to the chain: account its own carbon + heteroatoms.
+        accounted.add(g.carbon);
+        for (const a of g.atoms) accounted.add(a);
+      }
+    }
+    for (const c of chain) {
+      for (const nb of cg.adj.get(c) ?? []) {
+        if (!inChain.has(nb) && !groupAtoms.has(nb)) {
+          for (const a of branchCarbons(cg, nb, inChain)) accounted.add(a);
+        }
+      }
+    }
+    if (heavy.some((a) => !accounted.has(a.index))) {
+      return {
+        name: null,
+        status: "unsupported",
+        reason: "contains a substituent or arrangement not yet supported in this tier",
+      };
+    }
+
+    // ── Multiple-bond guard ─────────────────────────────────────────────────
+    // Each double/triple bond must be a consecutive main-chain ene/yne, or a
+    // recognized group bond (C=O carbonyl, C≡N nitrile). A multiple bond to a
+    // branch, an enol/enamine C=C, an imine C=N, etc. is not expressible → decline.
+    for (const b of graph.bonds) {
+      if (b.order < 2) continue;
+      const ia = chain.indexOf(b.from);
+      const ib = chain.indexOf(b.to);
+      if (ia >= 0 && ib >= 0 && Math.abs(ia - ib) === 1) continue; // on-chain ene/yne
+      if (groups.some((g) => g.atoms.includes(b.from) && g.atoms.includes(b.to))) continue;
+      // carbonyl/nitrile: group records only the heteroatom; the C is the anchor.
+      if (groups.some((g) => g.atoms.includes(b.from) || g.atoms.includes(b.to))) continue;
+      return {
+        name: null,
+        status: "unsupported",
+        reason: "contains a multiple bond not on the main chain — not yet supported",
+      };
     }
 
     // Build suffix spec for the PCG
