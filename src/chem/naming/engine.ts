@@ -10,10 +10,52 @@ const ELEMENT_REASON: Record<string, string> = {
   S: "contains sulfur — Tier 2+",
 };
 
+/**
+ * True if the heavy-atom (non-H) graph contains a cycle. For each connected
+ * component, a cycle exists iff the number of intra-component bonds is at least
+ * the number of atoms in that component (a tree has atoms-1 bonds).
+ */
+function hasHeavyAtomCycle(graph: MolGraph): boolean {
+  const heavy = new Set(graph.atoms.filter((a) => a.element !== "H").map((a) => a.index));
+  const heavyBonds = graph.bonds.filter((b) => heavy.has(b.from) && heavy.has(b.to));
+
+  // Union-find over heavy atoms to size components and detect closing edges.
+  const parent = new Map<number, number>();
+  for (const i of heavy) parent.set(i, i);
+  const find = (x: number): number => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    while (parent.get(x) !== r) { const n = parent.get(x)!; parent.set(x, r); x = n; }
+    return r;
+  };
+  const atomsIn = new Map<number, number>();
+  const bondsIn = new Map<number, number>();
+  for (const b of heavyBonds) {
+    const ra = find(b.from), rb = find(b.to);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+  for (const i of heavy) {
+    const r = find(i);
+    atomsIn.set(r, (atomsIn.get(r) ?? 0) + 1);
+  }
+  for (const b of heavyBonds) {
+    const r = find(b.from);
+    bondsIn.set(r, (bondsIn.get(r) ?? 0) + 1);
+  }
+  for (const [r, atoms] of atomsIn) {
+    if ((bondsIn.get(r) ?? 0) >= atoms) return true;
+  }
+  return false;
+}
+
 /** Tier-1 acceptance gate. Returns an `unsupported` reason or null if accepted. */
 function rejectReason(graph: MolGraph): string | null {
   if (graph.fragmentCount > 1) return "multiple fragments — arrives in a later tier";
   if (graph.atoms.some((a) => a.ringIds.length > 0)) return "contains a ring — arrives in Tier 3";
+  // Defense-in-depth: even without ring metadata, a connected heavy-atom graph
+  // with as many (or more) bonds as atoms must contain a cycle (a tree has
+  // atoms-1 bonds). Reject so we never emit an acyclic name for a ring.
+  if (hasHeavyAtomCycle(graph)) return "contains a ring — arrives in Tier 3";
   if (graph.atoms.some((a) => a.charge !== 0)) return "contains a charged atom — later tier";
   for (const a of graph.atoms) {
     if (a.element !== "C" && a.element !== "H") {
