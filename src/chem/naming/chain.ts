@@ -1,5 +1,4 @@
 // src/chem/naming/chain.ts
-import type { MolGraph } from "./graph";
 import { compareLocants } from "./graph";
 
 export interface CarbonGraph {
@@ -114,7 +113,7 @@ function orient(path: number[], cg: CarbonGraph): number[] {
   return bySub <= 0 ? path : rev;
 }
 
-export function selectPrincipalChain(cg: CarbonGraph, _graph: MolGraph): ChainChoice {
+export function selectPrincipalChain(cg: CarbonGraph): ChainChoice {
   const candidates = longestCarbonChains(cg).map((p) => orient(p, cg));
   candidates.sort((p, q) => {
     const mbCount = countMultipleBonds(q, cg) - countMultipleBonds(p, cg);

@@ -43,7 +43,7 @@ describe("selectPrincipalChain", () => {
     // C0=C1-C2-C3-C4 has the double bond at 0-1; numbering from C4 end -> locant 2? No.
     // Build pent-2-ene: C0-C1=C2-C3-C4 (double between 1,2).
     const g = carbonSkeleton(5, [[0, 1, 1], [1, 2, 2], [2, 3, 1], [3, 4, 1]]);
-    const chosen = selectPrincipalChain(buildCarbonGraph(g), g);
+    const chosen = selectPrincipalChain(buildCarbonGraph(g));
     // Direction chosen so the ene locant is 2 (lower) not 3.
     const idx = chosen.atoms;
     const dbPos = idx.findIndex((a, i) => i < idx.length - 1 &&
@@ -54,7 +54,7 @@ describe("selectPrincipalChain", () => {
   it("picks lowest substituent locant for 2-methylbutane", () => {
     // C0-C1(-C4)-C2-C3, methyl on C1. Main chain C0..C3; number so methyl=2.
     const g = carbonSkeleton(5, [[0, 1, 1], [1, 2, 1], [2, 3, 1], [1, 4, 1]]);
-    const chosen = selectPrincipalChain(buildCarbonGraph(g), g);
+    const chosen = selectPrincipalChain(buildCarbonGraph(g));
     const inChain = new Set(chosen.atoms);
     // the off-chain carbon (4) attaches to chosen.atoms[idx]; that locant must be 2
     const attachIdx = chosen.atoms.findIndex(

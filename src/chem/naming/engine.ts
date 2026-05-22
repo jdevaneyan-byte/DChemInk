@@ -32,7 +32,7 @@ export function nameMolecule(graph: MolGraph): NameResult {
 
   try {
     const cg = buildCarbonGraph(graph);
-    const chain = selectPrincipalChain(cg, graph).atoms;
+    const chain = selectPrincipalChain(cg).atoms;
 
     const doubles: number[] = [];
     const triples: number[] = [];

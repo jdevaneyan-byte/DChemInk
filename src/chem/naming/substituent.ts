@@ -1,5 +1,5 @@
 // src/chem/naming/substituent.ts
-import { parentStem, compareLocants, multiplierPrefix } from "./graph";
+import { parentStem, multiplierPrefix } from "./graph";
 import { type CarbonGraph } from "./chain";
 
 /** Carbons reachable from `root` without crossing back to `blocked`. */
@@ -94,6 +94,3 @@ function prefixFor(subs: { locant: number; name: string }[]): string {
     .map((p) => `${p.locants.join(",")}-${multiplierPrefix(p.locants.length)}${p.name}`)
     .join("-");
 }
-
-// Export compareLocants re-export for chain module usage
-export { compareLocants };
