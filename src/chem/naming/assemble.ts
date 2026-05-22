@@ -220,3 +220,78 @@ export function assembleName(input: AssemblyInput): string {
   // e.g. "4-ethyl-2,2-dimethyl" + "hexane" = "4-ethyl-2,2-dimethylhexane"
   return `${prefixSegment(input.subs, input.chainLen)}${name}`;
 }
+
+// ── Two-part name builders for acid derivatives (Tier 2b) ───────────────────
+
+export type Sub = { locant: number; name: string };
+
+/**
+ * Build the acyl group name for a chain of `chainLen` carbons with the given
+ * unsaturation and substituents. The carbonyl carbon is C1 of the chain.
+ *
+ * Naming: acid parent → replace "-oic acid" with "-oyl" (e-elision before 'o').
+ * Examples: ethanoyl (2C), propanoyl (3C), prop-2-enoyl (3C, double at 2).
+ */
+export function acylName(chainLen: number, doubles: number[], triples: number[], subs: Sub[]): string {
+  const stem = parentStem(chainLen);
+  // Build the parent name as if it were the hydrocarbon (ane/ene/yne).
+  const parentName = ending(stem, chainLen, doubles, triples);
+  // Convert to acyl: drop trailing 'e' (if present) and append 'oyl'.
+  // All endings (ane/ene/yne) end in 'e', so e-elision always applies.
+  let base = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
+  let acyl = base + "oyl";
+  if (subs.length === 0) return acyl;
+  return `${prefixSegment(subs, chainLen)}${acyl}`;
+}
+
+const HALIDE_WORD: Record<string, string> = {
+  F: "fluoride",
+  Cl: "chloride",
+  Br: "bromide",
+  I: "iodide",
+};
+
+/**
+ * Compose an acyl halide name: "<acyl> <halide-word>".
+ * e.g. acylHalideName("ethanoyl", "Cl") → "ethanoyl chloride"
+ */
+export function acylHalideName(acyl: string, halogen: string): string {
+  const word = HALIDE_WORD[halogen] ?? halogen.toLowerCase() + "ide";
+  return `${acyl} ${word}`;
+}
+
+/**
+ * Build an ester name: "<alkyl> <acid-stem>oate".
+ * The acid stem is derived from the acyl chain (same logic as acylName, but ending
+ * in "oate" rather than "oyl"). e-elision applies before 'o'.
+ * e.g. esterName("ethyl", 2, [], [], []) → "ethyl ethanoate"
+ * e.g. esterName("methyl", 3, [2], [], []) → "methyl prop-2-enoate"
+ */
+export function esterName(alkyl: string, acidChainLen: number, doubles: number[], triples: number[], subs: Sub[]): string {
+  const stem = parentStem(acidChainLen);
+  const parentName = ending(stem, acidChainLen, doubles, triples);
+  // e-elision before '-oate' (starts with 'o')
+  let base = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
+  let acidStem = base + "oate";
+  if (subs.length > 0) {
+    acidStem = `${prefixSegment(subs, acidChainLen)}${acidStem}`;
+  }
+  return `${alkyl} ${acidStem}`;
+}
+
+/**
+ * Build an anhydride name.
+ * Symmetric (side1 === side2): "<stem>oic anhydride"
+ * Mixed: both stems alphabetically sorted, each kept as-is (must already end in "oic"),
+ *   then space "anhydride".
+ * e.g. anhydrideName("ethanoic", "ethanoic") → "ethanoic anhydride"
+ * e.g. anhydrideName("ethanoic", "propanoic") → "ethanoic propanoic anhydride"
+ */
+export function anhydrideName(side1: string, side2: string): string {
+  if (side1 === side2) {
+    return `${side1} anhydride`;
+  }
+  // Alphabetical order
+  const [a, b] = side1 < side2 ? [side1, side2] : [side2, side1];
+  return `${a} ${b} anhydride`;
+}
