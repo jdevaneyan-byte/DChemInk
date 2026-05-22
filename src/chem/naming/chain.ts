@@ -1,5 +1,5 @@
 // src/chem/naming/chain.ts
-import { compareLocants } from "./graph";
+import { compareLocants, type MolGraph } from "./graph";
 
 export interface CarbonGraph {
   carbons: number[];                    // carbon atom indices

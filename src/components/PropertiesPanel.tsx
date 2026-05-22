@@ -15,6 +15,9 @@ import { NameToStructure } from "./NameToStructure";
 import { PropertyInfoModal } from "./PropertyInfoModal";
 import { NameInfoModal } from "./NameInfoModal";
 import { lookupName } from "@/chem/nameRegistry";
+import { graphFromSmiles } from "@/chem/naming/adapter";
+import { nameMolecule } from "@/chem/naming/engine";
+import { defaultVerifier, inchiKeyOf } from "@/chem/naming/verify";
 import { getHoveredAtomId } from "@/hotkeys/hoverState";
 import { copyRich } from "@/lib/clipboard";
 
@@ -92,6 +95,14 @@ export function PropertiesPanel({ onShowShortcuts }: PropertiesPanelProps = {}) 
   const [copied, setCopied] = useState<false | "ok" | "fail">(false);
   const [selectedOnly, setSelectedOnly] = useState(false);
   const [name, setName] = useState<string | null>(null);
+  // Systematic IUPAC name computed from the structure (P1.3). `ok` = OPSIN
+  // round-trip verified (deferred until an OPSIN build is available, so always
+  // false for now — the name is still corpus-validated). `supported` is false
+  // when the molecule is outside the current naming tier; `text` then holds the
+  // human-readable reason.
+  const [iupac, setIupac] = useState<{ text: string; ok: boolean; supported: boolean } | null>(
+    null,
+  );
   const [infoTerm, setInfoTerm] = useState<string | null>(null);
   const [nameOpen, setNameOpen] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
@@ -136,6 +147,7 @@ export function PropertiesPanel({ onShowShortcuts }: PropertiesPanelProps = {}) 
           setProps(null);
           setSelectedOnly(false);
           setName(null);
+          setIupac(null);
         }
         return;
       }
@@ -144,6 +156,7 @@ export function PropertiesPanel({ onShowShortcuts }: PropertiesPanelProps = {}) 
         setProps(null);
         setSelectedOnly(false);
         setName(null);
+        setIupac(null);
         return;
       }
 
@@ -169,6 +182,29 @@ export function PropertiesPanel({ onShowShortcuts }: PropertiesPanelProps = {}) 
       setProps(computeProperties(target));
       setSelectedOnly(isSelected);
       setName(lookupName(target));
+
+      // Systematic IUPAC name (structure → name). The engine runs on the
+      // normalized graph; OPSIN round-trip verification is best-effort.
+      const graph = graphFromSmiles(target);
+      if (!graph) {
+        if (!cancelled) setIupac(null);
+      } else {
+        const result = nameMolecule(graph);
+        if (cancelled) return;
+        if (result.status === "named" && result.name) {
+          const ik = inchiKeyOf(target);
+          const ok = ik ? await defaultVerifier.verify(result.name, ik) : false;
+          if (!cancelled) setIupac({ text: result.name, ok, supported: true });
+        } else if (result.status === "unsupported") {
+          setIupac({
+            text: `not yet supported — ${result.reason ?? ""}`.trim(),
+            ok: false,
+            supported: false,
+          });
+        } else {
+          setIupac(null);
+        }
+      }
     }
 
     refresh();
@@ -330,6 +366,34 @@ export function PropertiesPanel({ onShowShortcuts }: PropertiesPanelProps = {}) 
               )}
             </dd>
           </div>
+
+          {/* IUPAC name — computed from the structure (P1.3, Tier 1: acyclic
+              hydrocarbons). Shows the systematic name (✓ when round-trip
+              verified) or a transparent "not yet supported" reason. */}
+          {iupac && (
+            <div
+              className="flex justify-between gap-2"
+              data-testid="prop-iupac"
+            >
+              <dt className="text-slate-500 shrink-0">IUPAC</dt>
+              <dd
+                className={
+                  iupac.supported
+                    ? "text-right text-slate-800"
+                    : "text-right text-slate-400 text-xs"
+                }
+                title={iupac.text}
+                data-testid="prop-iupac-value"
+              >
+                {iupac.text}
+                {iupac.ok && (
+                  <span title="round-trip verified" className="ml-1 text-emerald-600">
+                    ✓
+                  </span>
+                )}
+              </dd>
+            </div>
+          )}
 
           {/* Identity */}
           <PropRow

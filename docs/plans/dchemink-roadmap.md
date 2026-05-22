@@ -35,12 +35,18 @@ what's deferred. It supersedes the older week-by-week breakdown.
 - ✅ **P1.2 Name → structure** — sidebar box + paste-name routing. Uses
   PubChem (online). ⚠️ **Offline/.exe builds need a preloaded local resolver
   (OPSIN + curated trivial-name table) — see `../OFFLINE-PACKAGING.md`.**
-- ⏸ **P1.3 Structure → name** — ON HOLD (user decision pending). ChemDraw uses
-  a bundled *algorithmic* IUPAC name generator (offline, no DB). No mature
-  open-source JS equivalent. Options: (a) curated InChIKey→name map + PubChem
-  `Title` lookup (online), (b) curated-only (offline, limited), (c) our own
-  rule-based IUPAC engine from the public IUPAC Blue Book on top of RDKit
-  perception (big, multi-week), (d) STOUT model (Tier-1, self-hosted).
+- 🟡 **P1.3 Structure → name** — building our own algorithmic IUPAC engine
+  (option c), offline, original work re-derived from the public IUPAC
+  recommendations. **Tier 1 shipped:** acyclic hydrocarbons (chain selection,
+  lowest-locant numbering, alkyl substituents, di/tri multipliers, ene/yne) —
+  engine in `src/chem/naming/` (pure-TS rules engine ← `MolGraph` ← RDKit
+  perception adapter), live "IUPAC" row in the Properties panel, transparent
+  "not yet supported — <reason>" for out-of-tier molecules. Design + tier
+  staircase (T2 functional groups → T3 rings → T4 polycyclic/heterocyclic →
+  T5 stereo) in `p1.3-iupac-naming-design.md`; T1 plan in
+  `p1.3-tier1-implementation.md`. Names are corpus-validated; OPSIN round-trip
+  "✓ verified" badge is deferred (`opsin-js` not published to npm — revisit
+  with an alternative OPSIN build, which also serves offline P1.2).
 - ✅ **P1.4 Clean-up / auto-layout** — sidebar "Clean up" (Ketcher/Indigo
   layout) + "Clean up · grid" (arranges disconnected fragments into a grid).
   Captions/property-blocks re-anchor to their molecule after layout.
@@ -93,5 +99,6 @@ Done: ✅ P1.1, ✅ P1.2, ✅ P1.4.
 Next: P2.2 (smart selection) → P2.1 (command palette) → P3.1 (export) →
 P2.3 (nicknames) → P3.3 (PWA) → P3.2 (journal styles) → P4.1 (lookup) →
 P4.2 (reaction UI + scheme auto-group/lock) → P4.3 (ML gateway).
-P1.3 (structure→name) parked pending the approach decision.
+P1.3 (structure→name) in progress: Tier 1 (acyclic) done; Tiers 2–5 next per
+`p1.3-iupac-naming-design.md`.
 Each ships as its own tested commit.

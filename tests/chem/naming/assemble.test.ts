@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleName, type AssemblyInput } from "@/chem/naming/assemble";
+import { assembleName } from "@/chem/naming/assemble";
 
 const sub = (locant: number, name: string) => ({ locant, name });
 
