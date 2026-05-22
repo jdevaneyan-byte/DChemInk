@@ -23,4 +23,22 @@ describe("assembleName", () => {
       subs: [sub(4, "ethyl"), sub(2, "methyl"), sub(2, "methyl")],
     })).toBe("4-ethyl-2,2-dimethylhexane");
   });
+
+  it("parenthesizes complex substituents", () => {
+    // 4-(2-methylpropyl)heptane
+    expect(assembleName({
+      chainLen: 7, doubles: [], triples: [],
+      subs: [sub(4, "2-methylpropyl")],
+    })).toBe("4-(2-methylpropyl)heptane");
+  });
+
+  it("alphabetizes a complex substituent by its first letter, not its leading locant", () => {
+    // ethyl ('e') must come before (2-methylpropyl) ('m'), despite the latter's
+    // leading '2'. Expect ethyl cited first.
+    const name = assembleName({
+      chainLen: 7, doubles: [], triples: [],
+      subs: [sub(5, "2-methylpropyl"), sub(3, "ethyl")],
+    });
+    expect(name).toBe("3-ethyl-5-(2-methylpropyl)heptane");
+  });
 });

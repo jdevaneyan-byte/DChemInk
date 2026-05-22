@@ -8,11 +8,27 @@ export interface AssemblyInput {
   subs: { locant: number; name: string }[];
 }
 
-/** Strip a leading multiplier so alphabetization sorts on the substituent base. */
+/**
+ * Alphabetization key. IUPAC alphabetizes a complex substituent by the FIRST
+ * LETTER of its complete name (e.g. "2-methylpropyl" sorts under 'm', not '2').
+ * Strip any wrapping parens, then drop leading locants/commas/parens/hyphens
+ * down to the first alphabetic character.
+ */
 function alphaKey(name: string): string {
-  // Complex (parenthesized) names alphabetize by their full first letter; simple
-  // names by the base. Leading di/tri/tetra in *complex* names is rare in T1.
-  return name.replace(/^\((.*)\)$/, "$1");
+  return name.replace(/^\((.*)\)$/, "$1").replace(/^[\d,()\-\s]+/, "");
+}
+
+/**
+ * A substituent is "complex" when its name carries an internal locant (any
+ * digit), e.g. "2-methylpropyl" or "propan-2-yl". Such names are wrapped in
+ * parentheses; simple names (methyl, ethyl, propyl) are not.
+ */
+function isComplex(name: string): boolean {
+  return /\d/.test(name);
+}
+
+function displayName(name: string): string {
+  return isComplex(name) ? `(${name})` : name;
 }
 
 function prefixSegment(subs: { locant: number; name: string }[]): string {
@@ -30,7 +46,7 @@ function prefixSegment(subs: { locant: number; name: string }[]): string {
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
   return parts
-    .map((p) => `${p.locants.join(",")}-${multiplierPrefix(p.locants.length)}${p.name}`)
+    .map((p) => `${p.locants.join(",")}-${multiplierPrefix(p.locants.length)}${displayName(p.name)}`)
     .join("-");
 }
 
