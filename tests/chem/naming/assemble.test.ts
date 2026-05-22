@@ -117,4 +117,27 @@ describe("assembleName (Tier 2 suffix)", () => {
       subs: [sub(1, "chloro")],
       suffix: { kind: "ol", locants: [2] } })).toBe("1-chloropropan-2-ol");
   });
+
+  // Regression: a single substituent on ethane omits its degenerate locant, but
+  // TWO substituents must keep locants (1,1 vs 1,2 differ). PubChem-verified.
+  it("chloroethane omits the locant; 1,1-dichloroethane keeps them", () => {
+    expect(assembleName({ chainLen: 2, doubles: [], triples: [],
+      subs: [sub(1, "chloro")] })).toBe("chloroethane");
+    expect(assembleName({ chainLen: 2, doubles: [], triples: [],
+      subs: [sub(1, "chloro"), sub(1, "chloro")] })).toBe("1,1-dichloroethane");
+  });
+
+  // Regression: di-nitrile/-amide are terminal-forced like dial/dioic acid, so
+  // their locants are omitted. PubChem: N#CCC#N -> propanedinitrile.
+  it("propanedinitrile omits locants (terminal dinitrile)", () => {
+    expect(assembleName({ chainLen: 3, doubles: [], triples: [], subs: [],
+      suffix: { kind: "nitrile", locants: [1, 3] } })).toBe("propanedinitrile");
+  });
+
+  // Regression: the trailing 'a' of "tetra" elides before the vowel of "-ol".
+  // PubChem: OCC(O)C(O)CO -> butane-1,2,3,4-tetrol.
+  it("butane-1,2,3,4-tetrol elides the multiplier 'a' before 'ol'", () => {
+    expect(assembleName({ chainLen: 4, doubles: [], triples: [], subs: [],
+      suffix: { kind: "ol", locants: [1, 2, 3, 4] } })).toBe("butane-1,2,3,4-tetrol");
+  });
 });

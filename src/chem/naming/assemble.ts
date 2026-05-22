@@ -53,7 +53,10 @@ function displayName(name: string): string {
  */
 function omitPrefixLocants(locants: number[], chainLen: number, allUniqueSubs: number): boolean {
   if (chainLen === 1) return true; // methane: always at position 1
-  if (chainLen === 2 && locants.every((l) => l === 1) && allUniqueSubs === 1) return true;
+  // Ethane: omit only for a SINGLE substituent occurrence (both ends equivalent,
+  // so its locant is degenerate). With two or more substituents the positions
+  // matter — "1,1-dichloroethane" vs "1,2-dichloroethane" — so keep the locants.
+  if (chainLen === 2 && locants.length === 1 && locants[0] === 1 && allUniqueSubs === 1) return true;
   return false;
 }
 
@@ -141,8 +144,10 @@ function suffixStartsWithVowel(kind: SuffixKind, multi: number): boolean {
  */
 function omitSuffixLocants(kind: SuffixKind, locants: number[], chainLen: number): boolean {
   if (locants.length > 1) {
-    // Multiple occurrences: omit for terminal-only groups (al, oic acid)
-    return kind === "al" || kind === "oic acid";
+    // Multiple occurrences: omit for terminal-only groups whose positions are
+    // forced to the chain ends — dial, dioic acid, dinitrile, diamide. (The
+    // nitrile/amide/aldehyde/acid carbon is inherently a chain terminus.)
+    return kind === "al" || kind === "oic acid" || kind === "nitrile" || kind === "amide";
   }
   // Single occurrence:
   // Terminal-only suffixes always at position 1 (or last): no locant needed
@@ -160,7 +165,13 @@ function omitSuffixLocants(kind: SuffixKind, locants: number[], chainLen: number
 function suffixString(spec: SuffixSpec, chainLen: number): string {
   const { kind, locants } = spec;
   const multi = locants.length;
-  const multPrefix = multiplierPrefix(multi); // "" / "di" / "tri"
+  let multPrefix = multiplierPrefix(multi); // "" / "di" / "tri" / "tetra" / ...
+  // Elide the trailing 'a' of a multiplying prefix (tetra, penta, …) before a
+  // suffix beginning with 'a' or 'o': "tetra"+"ol" → "tetrol". di/tri don't end
+  // in 'a', so they're unaffected (butane-1,4-diol keeps "di").
+  if (multPrefix.endsWith("a") && (kind[0] === "a" || kind[0] === "o")) {
+    multPrefix = multPrefix.slice(0, -1);
+  }
 
   const omit = omitSuffixLocants(kind, locants, chainLen);
   const locantStr = omit ? "" : locants.join(",") + "-";
