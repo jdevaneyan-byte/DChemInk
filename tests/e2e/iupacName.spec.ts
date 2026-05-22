@@ -55,11 +55,21 @@ test.describe("IUPAC name row (structure → name)", () => {
     );
   });
 
-  test("reports an ester as not yet supported (T2b)", async ({ page }) => {
-    // CC(=O)OC = methyl acetate (ester) — deferred to T2b
+  // ── Tier 2b: esters / acyl halides / anhydrides ───────────────────────────
+  test("names methyl ethanoate (CC(=O)OC — ester; PubChem: methyl acetate, retained; systematic)", async ({ page }) => {
+    // Tier 2b — ester now supported. PubChem gives retained "methyl acetate"; we assert systematic.
     await page.evaluate(() => window.ketcher!.setMolecule("CC(=O)OC"));
-    await expect(page.getByTestId("prop-iupac-value")).toContainText(
-      /not yet supported/i,
+    await expect(page.getByTestId("prop-iupac-value")).toHaveText(
+      /^methyl ethanoate/,
+      { timeout: 5_000 },
+    );
+  });
+
+  test("names ethanoyl chloride (CC(=O)Cl — acyl halide; PubChem: acetyl chloride, retained; systematic)", async ({ page }) => {
+    // Tier 2b — acyl halide now supported. PubChem gives retained "acetyl chloride"; we assert systematic.
+    await page.evaluate(() => window.ketcher!.setMolecule("CC(=O)Cl"));
+    await expect(page.getByTestId("prop-iupac-value")).toHaveText(
+      /^ethanoyl chloride/,
       { timeout: 5_000 },
     );
   });
