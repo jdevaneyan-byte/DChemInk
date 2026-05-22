@@ -3,6 +3,9 @@ import type { MolGraph } from "./graph";
 
 export type GroupKind =
   | "acid"
+  | "anhydride"
+  | "ester"
+  | "acylHalide"
   | "amide"
   | "nitrile"
   | "aldehyde"
@@ -23,6 +26,9 @@ export interface Group {
 /** Suffix-eligible seniority, high→low. Prefix-only groups are 0 (never PCG). */
 export const SENIORITY: Record<GroupKind, number> = {
   acid: 80,
+  anhydride: 75,
+  ester: 70,
+  acylHalide: 65,
   amide: 60,
   nitrile: 50,
   aldehyde: 40,
@@ -88,9 +94,34 @@ export function perceiveGroups(graph: MolGraph): Perception {
   // Track which atom indices have been classified as a group atom (not a carbon chain atom)
   const classified = new Set<number>(); // heteroatom indices already placed in a group
 
+  // ── Pre-pass: Identify anhydride bridging oxygens ─────────────────────────
+  // An oxygen that is single-bonded to TWO carbonyl carbons is an anhydride bridge.
+  // Must detect this before the carbonyl-carbon pass so we can classify it first
+  // (otherwise each carbonyl would see an "ester" O independently).
+  const anhydrideBridgeO = new Set<number>(); // O atom indices that are anhydride bridges
+  for (const oAtom of graph.atoms) {
+    if (oAtom.element !== "O" || oAtom.hydrogens > 0) continue;
+    const oNbs = neighbors(oAtom.index).filter((b) => b.order === 1);
+    // Count how many of its neighbours are carbonyl carbons (C with a =O bond to another O)
+    const carbonylNbs = oNbs.filter((b) => {
+      const cAtom = atomsById.get(b.to);
+      if (cAtom?.element !== "C") return false;
+      return neighbors(b.to).some(
+        (nb) => nb.order === 2 && atomsById.get(nb.to)?.element === "O" && nb.to !== oAtom.index,
+      );
+    });
+    if (carbonylNbs.length === 2) {
+      anhydrideBridgeO.add(oAtom.index);
+    }
+  }
+
   // ── Pass 1: Carbonyl carbons, nitrile carbons ──────────────────────────────
+  // Track which carbonyl carbons have been fully handled (for anhydride detection)
+  const handledCarbonyls = new Set<number>();
+
   for (const atom of graph.atoms) {
     if (atom.element !== "C") continue;
+    if (handledCarbonyls.has(atom.index)) continue;
     const nbs = neighbors(atom.index);
 
     // Look for C≡N (nitrile)
@@ -111,21 +142,61 @@ export function perceiveGroups(graph: MolGraph): Perception {
     // Collect the remaining neighbours of the carbonyl carbon (not the =O)
     const otherNbs = nbs.filter((b) => b.to !== oDouble.index);
 
-    // Acyl halide: a carbonyl carbon bonded to a halogen (R-C(=O)-X). Two-part /
-    // functional-class names — deferred to T2b with esters & anhydrides.
-    const acylHalide = otherNbs.find(
-      (b) => b.order === 1 && HALOGEN_PREFIX[atomsById.get(b.to)?.element ?? ""],
+    // ── Anhydride: check if this carbonyl C is connected to an anhydride-bridge O ──
+    const bridgeNb = otherNbs.find(
+      (b) => b.order === 1 && anhydrideBridgeO.has(b.to),
     );
-    if (acylHalide) {
-      return {
-        groups: [],
-        unsupported: "contains an acyl halide — arrives in T2b (next milestone)",
-      };
+    if (bridgeNb) {
+      const bridgeOIdx = bridgeNb.to;
+      // Find the second carbonyl carbon on the other side of the bridge O
+      const otherCarbonylNb = neighbors(bridgeOIdx).find(
+        (b) => b.order === 1 && b.to !== atom.index && atomsById.get(b.to)?.element === "C",
+      );
+      if (otherCarbonylNb) {
+        const c2Idx = otherCarbonylNb.to;
+        const c2Nbs = neighbors(c2Idx);
+        const doubleO2 = c2Nbs.find(
+          (b) => b.order === 2 && atomsById.get(b.to)?.element === "O" && b.to !== bridgeOIdx,
+        );
+        if (doubleO2) {
+          // Classify the anhydride: atoms = [bridgeO, =O1, =O2], detail = second acyl carbon index (as string)
+          classified.add(bridgeOIdx);
+          classified.add(oDouble.index);
+          classified.add(doubleO2.to);
+          handledCarbonyls.add(atom.index);
+          handledCarbonyls.add(c2Idx);
+          groups.push({
+            kind: "anhydride",
+            carbon: atom.index,
+            atoms: [bridgeOIdx, oDouble.index, doubleO2.to],
+            detail: String(c2Idx),
+          });
+          continue;
+        }
+      }
     }
 
-    // Carbonic-acid derivatives — a carbonyl carbon bearing TWO or more
-    // single-bonded heteroatoms (urea N-C(=O)-N, carbamate N-C(=O)-O, carbonate
-    // O-C(=O)-O, carbamic acid). Specialized functional-class names — not yet supported.
+    // ── Acyl halide: carbonyl C bonded to a halogen (R-C(=O)-X) ──────────────
+    const acylHalideNb = otherNbs.find(
+      (b) => b.order === 1 && HALOGEN_PREFIX[atomsById.get(b.to)?.element ?? ""],
+    );
+    if (acylHalideNb) {
+      const halAtom = atomsById.get(acylHalideNb.to)!;
+      classified.add(oDouble.index);
+      classified.add(halAtom.index);
+      groups.push({
+        kind: "acylHalide",
+        carbon: atom.index,
+        atoms: [oDouble.index, halAtom.index],
+        detail: halAtom.element,
+      });
+      continue;
+    }
+
+    // ── Carbonic-acid derivatives: carbonyl C bearing TWO single-bonded heteroatoms ──
+    // (urea N-C(=O)-N, carbamate N-C(=O)-O, carbonate O-C(=O)-O, carbamic acid)
+    // Note: anhydrides are already handled above (they carry a bridge O to another carbonyl),
+    // so by this point a singleO here connects to a non-carbonyl C only.
     const heteroSingles = otherNbs.filter(
       (b) => b.order === 1 && ["O", "N"].includes(atomsById.get(b.to)?.element ?? ""),
     );
@@ -158,15 +229,21 @@ export function perceiveGroups(graph: MolGraph): Perception {
         continue;
       }
       // Single-bonded O with no H: check if it connects to another C → ester
+      // (At this point we know it is NOT an anhydride bridge — that was handled above)
       const oNbs = neighbors(oAtom.index).filter((b) => b.to !== atom.index);
-      const conectsToC = oNbs.some((b) => atomsById.get(b.to)?.element === "C");
-      if (conectsToC) {
-        return {
-          groups: [],
-          unsupported: "contains an ester — esters arrive in T2b (next milestone)",
-        };
+      const connectsToC = oNbs.some((b) => atomsById.get(b.to)?.element === "C");
+      if (connectsToC) {
+        // Ester: record acyl carbon + =O + bridging O. The O-alkyl carbons stay in the graph.
+        classified.add(oDouble.index);
+        classified.add(oAtom.index);
+        groups.push({
+          kind: "ester",
+          carbon: atom.index,
+          atoms: [oDouble.index, oAtom.index],
+        });
+        continue;
       }
-      // O with no H and no other C (unusual) — treat as unsupported charged
+      // O with no H and no other C (unusual) — treat as unsupported
       return { groups: [], unsupported: "contains an unusual carbonyl-O — later tier" };
     }
 

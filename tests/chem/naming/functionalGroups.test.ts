@@ -160,15 +160,18 @@ describe("perceiveGroups", () => {
     expect(principalKind(p.groups)).toBe("acid");
   });
 
-  // ── Ester rejection ──────────────────────────────────────────────────────────
-  it("marks ester CC(=O)OC as unsupported (T2b)", () => {
+  // ── Ester (Tier 2b: now supported) ───────────────────────────────────────────
+  it("perceives ester CC(=O)OC as ester group (Tier 2b implemented)", () => {
     // 0=C(methyl), 1=C(carbonyl), 2=O(=), 3=O(ester-O), 4=C(methyl)
     const g = mol(
       [{ el: "C" }, { el: "C" }, { el: "O", h: 0 }, { el: "O", h: 0 }, { el: "C" }],
       [[0, 1, 1], [1, 2, 2], [1, 3, 1], [3, 4, 1]],
     );
     const p = perceiveGroups(g);
-    expect(p.unsupported).toMatch(/ester|T2b/i);
+    expect(p.unsupported).toBeUndefined();
+    const fg = p.groups.find((x) => x.kind === "ester");
+    expect(fg).toBeDefined();
+    expect(fg!.carbon).toBe(1);
   });
 });
 
