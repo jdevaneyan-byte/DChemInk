@@ -1,11 +1,19 @@
 // src/chem/naming/assemble.ts
 import { parentStem, multiplierPrefix } from "./graph";
 
+export type SuffixKind = "ol" | "al" | "one" | "amine" | "amide" | "nitrile" | "oic acid";
+
+export interface SuffixSpec {
+  kind: SuffixKind;
+  locants: number[]; // ascending
+}
+
 export interface AssemblyInput {
   chainLen: number;
   doubles: number[];   // ene locants (ascending)
   triples: number[];   // yne locants (ascending)
   subs: { locant: number; name: string }[];
+  suffix?: SuffixSpec; // principal characteristic group
 }
 
 /**
@@ -81,12 +89,94 @@ function ending(stem: string, chainLen: number, doubles: number[], triples: numb
   return head + segs.join("");
 }
 
+/**
+ * Suffix-initial character for e-elision purposes.
+ *
+ * Vowel-initial suffixes trigger e-elision (drop the trailing 'e' of the parent):
+ *   ol, al, one, amine, amide, oic acid
+ * Consonant-initial suffixes keep the 'e':
+ *   nitrile
+ * Multiplicity prefixes (di/tri) always start with 'd'/'t' (consonant) — keep 'e'.
+ */
+function suffixStartsWithVowel(kind: SuffixKind, multi: number): boolean {
+  // With multiplicity (di/tri…) the suffix string gets a 'd' or 't' prepended → consonant.
+  if (multi > 1) return false;
+  return kind === "ol" || kind === "al" || kind === "one" || kind === "amine" ||
+    kind === "amide" || kind === "oic acid";
+}
+
+/**
+ * Whether the locants must be cited in the suffix.
+ *
+ * Omit locants for:
+ * - Terminal groups that can ONLY appear at position 1 (acid, al, nitrile, amide
+ *   when the group is at a chain end and there's only one occurrence).
+ * - Any suffix on a 2-carbon chain where the position is forced (ethanamine).
+ */
+function omitSuffixLocants(kind: SuffixKind, locants: number[], chainLen: number): boolean {
+  if (locants.length > 1) {
+    // Multiple occurrences: omit for terminal-only groups (al, oic acid)
+    return kind === "al" || kind === "oic acid";
+  }
+  // Single occurrence:
+  // Terminal-only suffixes always at position 1 (or last): no locant needed
+  if (kind === "al" || kind === "oic acid" || kind === "nitrile" || kind === "amide") return true;
+  // amine on a 2-carbon chain: ethanamine (degenerate, only at 1)
+  if (kind === "amine" && chainLen === 2) return true;
+  // ol/one/amine on longer chains: cite the locant
+  return false;
+}
+
+/** Build the full suffix string including locants and multiplicity, e.g. "-2-one", "-1,4-diol". */
+function suffixString(spec: SuffixSpec, chainLen: number): string {
+  const { kind, locants } = spec;
+  const multi = locants.length;
+  const multPrefix = multiplierPrefix(multi); // "" / "di" / "tri"
+
+  const omit = omitSuffixLocants(kind, locants, chainLen);
+  const locantStr = omit ? "" : locants.join(",") + "-";
+
+  // Build the suffix text: multiplicity prefix + kind
+  const suffixText = `${multPrefix}${kind}`;
+
+  if (omit) {
+    // No locant: suffix attaches immediately after the parent stem
+    return suffixText;
+  }
+  // Cite locant: prefix with "-locant-"
+  return `-${locantStr}${suffixText}`;
+}
+
+/** Attach the suffix to the parent name (which ends in -ane/-ene/-yne). */
+function attachSuffix(parentName: string, spec: SuffixSpec, chainLen: number): string {
+  const multi = spec.locants.length;
+  const dropE = suffixStartsWithVowel(spec.kind, multi);
+
+  // The parentName ends in 'e' for ane/ene (e.g. "propane", "propene").
+  // For yne it ends in 'e' too (e.g. "propyne").
+  let base = parentName;
+  if (dropE && base.endsWith("e")) {
+    base = base.slice(0, -1); // drop trailing 'e' before vowel-initial suffix
+  }
+
+  const suf = suffixString(spec, chainLen);
+  return base + suf;
+}
+
 export function assembleName(input: AssemblyInput): string {
   const stem = parentStem(input.chainLen);
   const parentName = ending(stem, input.chainLen, input.doubles, input.triples);
-  if (input.subs.length === 0) return parentName;
+
+  let name: string;
+  if (input.suffix) {
+    name = attachSuffix(parentName, input.suffix, input.chainLen);
+  } else {
+    name = parentName;
+  }
+
+  if (input.subs.length === 0) return name;
   // Prefix block appended directly to parent name (no separator before parent).
   // e.g. "2-methyl" + "butane" = "2-methylbutane"
   // e.g. "4-ethyl-2,2-dimethyl" + "hexane" = "4-ethyl-2,2-dimethylhexane"
-  return `${prefixSegment(input.subs)}${parentName}`;
+  return `${prefixSegment(input.subs)}${name}`;
 }
