@@ -51,25 +51,29 @@ function pathBetween(cg: CarbonGraph, a: number, b: number): number[] | null {
   return path.reverse();
 }
 
-/** All maximal-length carbon chains (each as an ordered atom-index array). */
-export function longestCarbonChains(cg: CarbonGraph): number[][] {
+/** All carbon chains (unique path for every carbon pair). */
+export function allCarbonChains(cg: CarbonGraph): number[][] {
   const cs = cg.carbons;
   if (cs.length === 1) return [[cs[0]]];
-  let best = 0;
-  let result: number[][] = [];
+  const result: number[][] = [];
   const seenKey = new Set<string>();
   for (let i = 0; i < cs.length; i++) {
     for (let j = i + 1; j < cs.length; j++) {
       const p = pathBetween(cg, cs[i], cs[j]);
       if (!p) continue;
-      if (p.length > best) { best = p.length; result = []; seenKey.clear(); }
-      if (p.length === best) {
-        const k = [p[0], p[p.length - 1]].sort((x, y) => x - y).join("-");
-        if (!seenKey.has(k)) { seenKey.add(k); result.push(p); }
-      }
+      const k = [p[0], p[p.length - 1]].sort((x, y) => x - y).join("-");
+      if (!seenKey.has(k)) { seenKey.add(k); result.push(p); }
     }
   }
   return result;
+}
+
+/** All maximal-length carbon chains (each as an ordered atom-index array). */
+export function longestCarbonChains(cg: CarbonGraph): number[][] {
+  const all = allCarbonChains(cg);
+  if (all.length === 0) return cg.carbons.length === 1 ? [[cg.carbons[0]]] : [];
+  const best = Math.max(...all.map((p) => p.length));
+  return all.filter((p) => p.length === best);
 }
 
 export interface ChainChoice {
@@ -144,9 +148,32 @@ function compareByFirstAlpha(path: number[], rev: number[], cg: CarbonGraph): nu
   return 0;
 }
 
+/** PCG anchor locants on a directed path (ascending). */
+function pcgLocants(path: number[], pcg: Set<number>): number[] {
+  const locs: number[] = [];
+  path.forEach((a, i) => { if (pcg.has(a)) locs.push(i + 1); });
+  return locs.sort((x, y) => x - y);
+}
+
+/** Count PCG anchor carbons present on a path. */
+function countPcgOnPath(path: number[], pcg: Set<number>): number {
+  return path.filter((a) => pcg.has(a)).length;
+}
+
+export interface SelectPrincipalChainOpts {
+  pcgCarbons?: number[]; // atom indices of principal characteristic group anchor carbons
+}
+
 /** Pick the better numbering direction of one candidate chain. */
-function orient(path: number[], cg: CarbonGraph): number[] {
+function orient(path: number[], cg: CarbonGraph, pcg?: Set<number>): number[] {
   const rev = [...path].reverse();
+
+  // 0 (Tier-2). PCG gets the lowest locants (before multiple bonds).
+  if (pcg && pcg.size > 0) {
+    const byPcg = compareLocants(pcgLocants(path, pcg), pcgLocants(rev, pcg));
+    if (byPcg !== 0) return byPcg < 0 ? path : rev;
+  }
+
   const a = { mb: multipleBondLocants(path, cg), sub: substituentLocants(path, cg) };
   const b = { mb: multipleBondLocants(rev, cg), sub: substituentLocants(rev, cg) };
   // 1. Lower locants to the combined set of multiple bonds.
@@ -164,9 +191,30 @@ function orient(path: number[], cg: CarbonGraph): number[] {
   return byAlpha <= 0 ? path : rev;
 }
 
-export function selectPrincipalChain(cg: CarbonGraph): ChainChoice {
-  const candidates = longestCarbonChains(cg).map((p) => orient(p, cg));
+export function selectPrincipalChain(cg: CarbonGraph, opts?: SelectPrincipalChainOpts): ChainChoice {
+  const pcg = new Set(opts?.pcgCarbons ?? []);
+
+  // Candidate pool: when PCG carbons are present, prefer chains that contain the most.
+  // Fall back to longest chains when no PCG info is given.
+  let pool: number[][];
+  if (pcg.size > 0) {
+    const all = allCarbonChains(cg);
+    const maxPcg = Math.max(...all.map((p) => countPcgOnPath(p, pcg)));
+    const withPcg = all.filter((p) => countPcgOnPath(p, pcg) === maxPcg);
+    const maxLen = Math.max(...withPcg.map((p) => p.length));
+    pool = withPcg.filter((p) => p.length === maxLen);
+  } else {
+    pool = longestCarbonChains(cg);
+  }
+
+  const candidates = pool.map((p) => orient(p, cg, pcg.size > 0 ? pcg : undefined));
   candidates.sort((p, q) => {
+    // When PCG is present, the orient() step already resolved direction.
+    // Sort candidates by PCG locants first (lowest set wins).
+    if (pcg.size > 0) {
+      const byPcg = compareLocants(pcgLocants(p, pcg), pcgLocants(q, pcg));
+      if (byPcg !== 0) return byPcg;
+    }
     const mbCount = countMultipleBonds(q, cg) - countMultipleBonds(p, cg);
     if (mbCount !== 0) return mbCount; // more multiple bonds first
     const mb = compareLocants(multipleBondLocants(p, cg), multipleBondLocants(q, cg));
