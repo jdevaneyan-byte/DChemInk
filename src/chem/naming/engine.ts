@@ -1251,11 +1251,22 @@ function nameMoleculeRingAsSubstituent(
     }
   }
 
-  // Add ring as substituent at chainAttachAtom's chain position
+  // Add ring as substituent at chainAttachAtom's chain position.
+  // CLASS 1 (NO WRONG NAMES): the ring may attach only at a main-chain carbon. If
+  // the ring hangs off a BRANCH carbon (chainAttachAtom is not on the selected
+  // main chain), the substituent branch contains a ring we cannot express — the
+  // acyclic substituent namer would silently drop the ring atoms (e.g.
+  // CC(C)(C)C(Cc1ccccc1)C(=O)O → "2,3,3-trimethylbutanoic acid", dropping benzyl).
+  // Decline rather than emit a name that omits the ring.
   const chainPos = chain.indexOf(chainAttachAtom!);
-  if (chainPos >= 0) {
-    subs.push({ locant: chainPos + 1, name: ringSub });
+  if (chainPos < 0) {
+    return {
+      name: null,
+      status: "unsupported",
+      reason: "ring-containing substituent not yet supported — Tier 4",
+    };
   }
+  subs.push({ locant: chainPos + 1, name: ringSub });
 
   // Completeness guard: chain atoms + group atoms + ring atoms + ring substituent atoms
   const accounted = new Set<number>([...chain, ...ring.atoms]);
