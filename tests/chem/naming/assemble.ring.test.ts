@@ -108,11 +108,12 @@ describe("assembleRingName - carbocycles", () => {
   });
 
   it("4-methylcyclohexan-1-ol (suffix + substituent)", () => {
+    // PubChem PIN: 4-methylcyclohexan-1-ol (locant cited when other subs present)
     expect(assembleRingName({
       parent: "cyclohexane",
       subs: [{ locant: 4, name: "methyl" }],
       suffix: { kind: "ol", locants: [1] },
-    })).toBe("4-methylcyclohexanol");
+    })).toBe("4-methylcyclohexan-1-ol");
   });
 });
 
@@ -230,5 +231,45 @@ describe("assembleRingName - heterocycles", () => {
       subs: [],
       addedCarbon: { kind: "carbonitrile", locants: [2] },
     })).toBe("furan-2-carbonitrile");
+  });
+});
+
+describe("assembleRingName – cycloalkene substituent locants (audit fixes)", () => {
+  // IUPAC rule: when the ring has unsaturation, substituent locants must be cited
+  // even for a single substituent (position relative to double bond matters).
+  // PubChem: 1-methylcyclohexene (not methylcyclohexene).
+  it("1-methylcyclohexene (single sub at double bond position, locant cited)", () => {
+    expect(assembleRingName({
+      parent: "cyclohexane",
+      subs: [{ locant: 1, name: "methyl" }],
+      ringDoubleBondLocants: [1],
+    })).toBe("1-methylcyclohexene");
+  });
+
+  it("cyclohexene (no substituent, no locant change)", () => {
+    expect(assembleRingName({
+      parent: "cyclohexane",
+      subs: [],
+      ringDoubleBondLocants: [1],
+    })).toBe("cyclohexene");
+  });
+
+  // PubChem: cyclohexen-1-ol — suffix locant cited when double bond present
+  it("cyclohexen-1-ol (suffix locant cited when ring has double bond)", () => {
+    expect(assembleRingName({
+      parent: "cyclohexane",
+      subs: [],
+      suffix: { kind: "ol", locants: [1] },
+      ringDoubleBondLocants: [1],
+    })).toBe("cyclohexen-1-ol");
+  });
+
+  // 4-methylcyclohexane-1-carboxylic acid: added-carbon locant cited when other subs present
+  it("4-methylcyclohexane-1-carboxylic acid (locant cited when other subs)", () => {
+    expect(assembleRingName({
+      parent: "cyclohexane",
+      subs: [{ locant: 4, name: "methyl" }],
+      addedCarbon: { kind: "carboxylic acid", locants: [1] },
+    })).toBe("4-methylcyclohexane-1-carboxylic acid");
   });
 });

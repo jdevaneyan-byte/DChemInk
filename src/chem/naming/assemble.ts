@@ -423,8 +423,11 @@ export function assembleRingName(input: RingAssemblyInput): string {
   // ── Apply suffix (on ring atom: -ol, -one, -amine) ───────────────────────────
   // Heterocycles and carbocycles both use suffix-on-ring; locants are always cited
   // for rings (ring position 1 is the heteroatom, not the PCG for hetero rings).
+  // IUPAC rule: also cite locant 1 when there are OTHER ring substituents present,
+  // or when the ring has double bonds (cycloalkene: position relative to π system matters).
+  const hasOtherSubs = subs.length > 0 || !!(ringDoubleBondLocants && ringDoubleBondLocants.length > 0);
   if (suffix) {
-    baseName = attachRingSuffix(baseName, suffix, parent);
+    baseName = attachRingSuffix(baseName, suffix, parent, hasOtherSubs);
   }
 
   // ── Apply added-carbon suffix ─────────────────────────────────────────────────
@@ -433,7 +436,8 @@ export function assembleRingName(input: RingAssemblyInput): string {
     // "cyclohexanecarboxylic acid" — no e-elision before "carbo..."
     // The locant of the exocyclic group is cited when > 1 or when the parent is a
     // heterocycle (since the numbering matters for position on the ring).
-    const locantStr = shouldCiteAddedCarbonLocant(locants, baseName, parent)
+    // Also cited when there are other ring substituents (hasOtherSubs).
+    const locantStr = shouldCiteAddedCarbonLocant(locants, baseName, parent, hasOtherSubs)
       ? `-${locants.join(",")}-`
       : "";
     // Reconstruct: if baseName was modified by suffix we already handled that;
@@ -454,8 +458,11 @@ export function assembleRingName(input: RingAssemblyInput): string {
   // Always cite locants for heterocycles (position matters relative to heteroatom),
   // or when there's also a suffix (PCG at position 1, substituents need position info),
   // or when there are multiple substituents.
+  // Also cite when the ring has double bonds (cycloalkene): substituent position
+  // relative to the double bond must be unambiguous — e.g. 1-methylcyclohexene.
   const hasSuffix = !!suffix || !!addedCarbon;
-  const pfx = prefixSegmentRing(subs, isHeteroCycleParent || hasSuffix);
+  const hasRingUnsaturation = !!(ringDoubleBondLocants && ringDoubleBondLocants.length > 0);
+  const pfx = prefixSegmentRing(subs, isHeteroCycleParent || hasSuffix || hasRingUnsaturation);
   return `${pfx}${baseName}`;
 }
 
@@ -467,15 +474,19 @@ export function assembleRingName(input: RingAssemblyInput): string {
  *  - For carbocycles: locant 1 is omitted (only one possible position when no subs),
  *    but cite when there are multiple possible positions (only relevant for dicarboxylic
  *    rings, which we'd handle separately).
+ *  - hasOtherSubs: cite when there are other ring substituents (IUPAC rule: disambiguate).
  */
 function shouldCiteAddedCarbonLocant(
   locants: number[],
   _baseName: string,
   parent: string,
+  hasOtherSubs = false,
 ): boolean {
   // Heterocycles always cite the locant
   if (!parent.startsWith("cyclo") && parent !== "benzene") return true;
   // Benzene: benzoic acid is already handled via retained; shouldn't reach here
+  // When other substituents are present, cite the locant even for position 1
+  if (hasOtherSubs && locants.length === 1 && locants[0] === 1) return true;
   // Carbocycles: single locant 1 → omit; otherwise cite
   if (locants.length === 1 && locants[0] === 1) return false;
   return locants.length > 1 || (locants.length === 1 && locants[0] !== 1);
@@ -504,8 +515,10 @@ function buildUnsaturatedBase(parent: string, doubles?: number[]): string {
  *  - cyclohexanol: 'e' dropped → "cyclohexan" + "ol"
  *  - cyclohexan-1-amine: 'e' dropped → "cyclohexan" + "-1-amine" (with locant)
  *  - pyridin-3-ol: 'e' dropped, locant always cited for hetero
+ *  - hasOtherSubs: cite locant 1 even for carbocycles when other subs are present
+ *    (IUPAC rule: 4-methylcyclohexan-1-ol, not 4-methylcyclohexanol)
  */
-function attachRingSuffix(baseName: string, spec: SuffixSpec, originalParent: string): string {
+function attachRingSuffix(baseName: string, spec: SuffixSpec, originalParent: string, hasOtherSubs = false): string {
   const { kind, locants } = spec;
   const isCarbocycle = originalParent.startsWith("cyclo");
   const isBenzene = originalParent === "benzene";
@@ -529,11 +542,12 @@ function attachRingSuffix(baseName: string, spec: SuffixSpec, originalParent: st
 
   // Locant citation:
   // For carbocycles (and benzene treated as carbocycle):
-  //   - -ol: omit locant 1 → "cyclohexanol"
-  //   - -one: omit locant 1 → "cyclohexanone"
+  //   - -ol: omit locant 1 → "cyclohexanol" (but cite when other subs present)
+  //   - -one: omit locant 1 → "cyclohexanone" (but cite when other subs present)
   //   - -amine: omit locant 1 → "cyclohexanamine" (IUPAC preferred; PubChem confirms)
   // For heterocycles: always cite locant (position relative to heteroatom matters)
-  const alwaysOmitLoc1 = !isHetero && (kind === "ol" || kind === "one" || kind === "amine");
+  // hasOtherSubs: force locant citation when other ring substituents are present
+  const alwaysOmitLoc1 = !isHetero && !hasOtherSubs && (kind === "ol" || kind === "one" || kind === "amine");
   const alwaysCite = isHetero;
 
   const multPfx = multiplierPrefix(multi);
@@ -543,7 +557,7 @@ function attachRingSuffix(baseName: string, spec: SuffixSpec, originalParent: st
     if (alwaysOmitLoc1 && loc === 1) {
       return `${base}${multPfx}${kind}`;
     }
-    if (!alwaysCite && !isHetero && loc === 1 && kind !== "amine") {
+    if (!alwaysCite && !isHetero && !hasOtherSubs && loc === 1 && kind !== "amine") {
       return `${base}${multPfx}${kind}`;
     }
     // Cite the locant
