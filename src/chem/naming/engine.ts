@@ -608,6 +608,17 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
   // Determine PCG
   const pcgKind = principalKind(groups);
 
+  // ── CLASS 2 (NO WRONG NAMES): acid derivative as a non-principal prefix ─────
+  // Same rule as the acyclic path: acylHalide/ester/anhydride have no valid
+  // detachable-prefix form, so decline when present but not the PCG.
+  if (groups.some((g) => isTwoPart(g.kind) && g.kind !== pcgKind)) {
+    return {
+      name: null,
+      status: "unsupported",
+      reason: "acid derivative as substituent prefix not yet supported — Tier 4",
+    };
+  }
+
   // ── Determine parent: ring or chain ──────────────────────────────────────────
   // Rule:
   //  1. No PCG → ring is parent (e.g. alkylcyclohexane)
@@ -1370,6 +1381,21 @@ export function nameMolecule(graph: MolGraph): NameResult {
     const pcgKind = principalKind(groups);
     const pcgGroups = pcgKind ? groups.filter((g) => g.kind === pcgKind) : [];
     const pcgCarbons = pcgGroups.map((g) => g.carbon);
+
+    // ── CLASS 2 (NO WRONG NAMES): acid derivative as a non-principal prefix ─────
+    // acylHalide/ester/anhydride have no real detachable prefix in this engine —
+    // prefixForm returns placeholders ("haloformyl", "alkoxycarbonyl", "anhydride")
+    // that are not valid IUPAC and that OPSIN cannot parse. When such a group is
+    // present but is NOT the principal characteristic group (a more senior group
+    // outranks it), it would have to be cited as a prefix → decline instead of
+    // emitting a bogus name (e.g. COC(C(=O)O)C(=O)F).
+    if (groups.some((g) => isTwoPart(g.kind) && g.kind !== pcgKind)) {
+      return {
+        name: null,
+        status: "unsupported",
+        reason: "acid derivative as substituent prefix not yet supported — Tier 4",
+      };
+    }
 
     // ── Two-part naming path (Tier 2b): acylHalide / ester / anhydride ─────────
     if (pcgKind && isTwoPart(pcgKind)) {

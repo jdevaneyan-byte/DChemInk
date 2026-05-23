@@ -54,3 +54,17 @@ describe("CLASS 1 — ring-containing substituent on a chain parent must decline
     expect(name("CCCCC1CCCCC1")).toBe("butylcyclohexane");
   });
 });
+
+describe("CLASS 2 — acid derivative demoted to prefix must decline", () => {
+  it("COC(C(=O)O)C(=O)F declines (no bogus 'haloformyl' prefix)", () => {
+    expect(status("COC(C(=O)O)C(=O)F")).toBe("unsupported");
+  });
+
+  // Must STILL work — these ARE the principal group.
+  it("CC(=O)Cl → ethanoyl chloride still works", () => {
+    expect(name("CC(=O)Cl")).toBe("ethanoyl chloride");
+  });
+  it("CC(=O)OCC → ethyl ethanoate still works", () => {
+    expect(name("CC(=O)OCC")).toBe("ethyl ethanoate");
+  });
+});
