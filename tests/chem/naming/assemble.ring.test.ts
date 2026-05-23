@@ -74,12 +74,13 @@ describe("assembleRingName - carbocycles", () => {
     })).toBe("cyclohexanone");
   });
 
-  it("cyclohexan-1-amine (suffix -amine)", () => {
+  it("cyclohexanamine (suffix -amine, locant 1 omitted per PIN)", () => {
+    // PubChem preferred PIN: cyclohexanamine (locant "1" omitted for unsubstituted ring)
     expect(assembleRingName({
       parent: "cyclohexane",
       subs: [],
       suffix: { kind: "amine", locants: [1] },
-    })).toBe("cyclohexan-1-amine");
+    })).toBe("cyclohexanamine");
   });
 
   it("cyclohexanecarboxylic acid (added-carbon acid)", () => {

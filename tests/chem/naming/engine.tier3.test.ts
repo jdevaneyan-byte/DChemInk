@@ -103,8 +103,9 @@ describe("Tier 3 – carbocycles", () => {
     expect(name("O=CC1CCCCC1")).toBe("cyclohexanecarbaldehyde");
   });
 
-  it("NC1CCCCC1 → cyclohexan-1-amine", () => {
-    expect(name("NC1CCCCC1")).toBe("cyclohexan-1-amine");
+  it("NC1CCCCC1 → cyclohexanamine (locant 1 omitted per PIN)", () => {
+    // PubChem preferred PIN: cyclohexanamine (locant "1" omitted for unambiguous position)
+    expect(name("NC1CCCCC1")).toBe("cyclohexanamine");
   });
 
   // CCCCC1CCCCC1: 4 chain carbons (0,1,2,3) + ring atom 4 + ring atoms 5..9
@@ -281,6 +282,29 @@ describe("Tier 3 – Bug 2: ring-vs-chain parent when PCG on exocyclic chain", (
   // PubChem PIN: phenylmethanol
   it("OCc1ccccc1 → phenylmethanol", () => {
     expect(name("OCc1ccccc1")).toBe("phenylmethanol");
+  });
+});
+
+describe("Tier 3 – PubChem audit bug fixes", () => {
+  // Bug: cyclohexa-1,3-diene (wrong) vs cyclohexa-1,4-diene (correct)
+  // SMILES C1=CCC=CC1 has double bonds at C0=C1 and C3=C4 (para, 1,4 pattern)
+  it("C1=CCC=CC1 → cyclohexa-1,4-diene (not 1,3)", () => {
+    expect(name("C1=CCC=CC1")).toBe("cyclohexa-1,4-diene");
+  });
+
+  // Bug: cyclohexan-1-amine (wrong locant) vs cyclohexanamine (PIN, locant omitted)
+  it("NC1CCCCC1 → cyclohexanamine (not cyclohexan-1-amine)", () => {
+    expect(name("NC1CCCCC1")).toBe("cyclohexanamine");
+  });
+
+  // Bug: phenylethanone (missing substituent locant) vs 1-phenylethanone
+  it("CC(=O)c1ccccc1 → 1-phenylethanone (phenyl at C1 needs locant)", () => {
+    expect(name("CC(=O)c1ccccc1")).toBe("1-phenylethanone");
+  });
+
+  // Bug: benzen-1,4-diol (typo: 'e' wrongly elided) vs benzene-1,4-diol
+  it("Oc1ccc(O)cc1 → benzene-1,4-diol (not benzen-1,4-diol)", () => {
+    expect(name("Oc1ccc(O)cc1")).toBe("benzene-1,4-diol");
   });
 });
 

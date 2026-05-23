@@ -51,16 +51,29 @@ function displayName(name: string): string {
  * This gives: "chloroethane" (not "1-chloroethane"), "methoxyethane" (not
  * "1-methoxyethane"), "trifluoromethane" (not "1,1,1-trifluoromethane").
  */
-function omitPrefixLocants(locants: number[], chainLen: number, allUniqueSubs: number): boolean {
+function omitPrefixLocants(
+  locants: number[],
+  chainLen: number,
+  allUniqueSubs: number,
+  hasSuffix = false,
+): boolean {
   if (chainLen === 1) return true; // methane: always at position 1
   // Ethane: omit only for a SINGLE substituent occurrence (both ends equivalent,
   // so its locant is degenerate). With two or more substituents the positions
   // matter — "1,1-dichloroethane" vs "1,2-dichloroethane" — so keep the locants.
+  // Exception: when a non-terminal suffix (ketone/ol/amine) is also present at
+  // locant 1, the substituent locant IS needed to unambiguously place it on the
+  // same carbon as the suffix. e.g. "1-phenylethanone" not "phenylethanone".
+  if (hasSuffix) return false; // always cite when a positioned suffix is present
   if (chainLen === 2 && locants.length === 1 && locants[0] === 1 && allUniqueSubs === 1) return true;
   return false;
 }
 
-function prefixSegment(subs: { locant: number; name: string }[], chainLen?: number): string {
+function prefixSegment(
+  subs: { locant: number; name: string }[],
+  chainLen?: number,
+  hasSuffix = false,
+): string {
   const groups = new Map<string, number[]>();
   for (const s of subs) {
     const arr = groups.get(s.name) ?? [];
@@ -77,7 +90,7 @@ function prefixSegment(subs: { locant: number; name: string }[], chainLen?: numb
   const numUniqueSubs = parts.length;
   return parts
     .map((p) => {
-      const omit = chainLen !== undefined && omitPrefixLocants(p.locants, chainLen, numUniqueSubs);
+      const omit = chainLen !== undefined && omitPrefixLocants(p.locants, chainLen, numUniqueSubs, hasSuffix);
       if (omit) {
         return `${multiplierPrefix(p.locants.length)}${displayName(p.name)}`;
       }
@@ -216,9 +229,12 @@ export function assembleName(input: AssemblyInput): string {
 
   if (input.subs.length === 0) return name;
   // Prefix block appended directly to parent name (no separator before parent).
-  // e.g. "2-methyl" + "butane" = "2-methylbutane"
-  // e.g. "4-ethyl-2,2-dimethyl" + "hexane" = "4-ethyl-2,2-dimethylhexane"
-  return `${prefixSegment(input.subs, input.chainLen)}${name}`;
+  // When a non-terminal suffix (one/ol/amine) is present, pass hasSuffix=true to
+  // ensure substituent locants are cited even on 2-carbon chains (e.g. 1-phenylethanone).
+  const hasSuffix = !!input.suffix && (
+    input.suffix.kind === "one" || input.suffix.kind === "ol" || input.suffix.kind === "amine"
+  );
+  return `${prefixSegment(input.subs, input.chainLen, hasSuffix)}${name}`;
 }
 
 // ── Two-part name builders for acid derivatives (Tier 2b) ───────────────────
@@ -495,28 +511,31 @@ function attachRingSuffix(baseName: string, spec: SuffixSpec, originalParent: st
   const isBenzene = originalParent === "benzene";
   const isHetero = !isCarbocycle && !isBenzene;
 
-  // e-elision: drop trailing 'e' for vowel-initial suffixes
-  // -ol starts with 'o' (vowel) → elide
-  // -one starts with 'o' (vowel) → elide
-  // -amine starts with 'a' (vowel) → elide
+  // e-elision: drop trailing 'e' for vowel-initial suffixes.
+  // When the multiplicity prefix (di, tri, …) is prepended, the effective first
+  // character changes: di/tri start with a consonant, so NO e-elision for multi>1.
+  // e.g. benzene + -1,4-diol: "di" + "ol" → "diol" starts with 'd' (consonant)
+  //      → keep 'e': "benzene-1,4-diol" (not "benzen-1,4-diol").
+  // e.g. cyclohexane + -one: "one" starts with 'o' (vowel) → elide 'e': "cyclohexanone".
   const vowelSuffixes = new Set(["ol", "one", "amine", "al", "amide"]);
-  const dropE = vowelSuffixes.has(kind);
+  const multi = locants.length;
+  // e-elision applies only when the suffix DIRECTLY starts with a vowel,
+  // which is only the case for a SINGLE occurrence (no di/tri multiplier).
+  const dropE = vowelSuffixes.has(kind) && multi === 1;
   let base = baseName;
   if (dropE && base.endsWith("e")) {
     base = base.slice(0, -1);
   }
 
   // Locant citation:
-  // For carbocycles:
-  //   - -ol: omit locant 1 → "cyclohexanol" (unique for unsubstituted ring)
+  // For carbocycles (and benzene treated as carbocycle):
+  //   - -ol: omit locant 1 → "cyclohexanol"
   //   - -one: omit locant 1 → "cyclohexanone"
-  //   - -amine: always cite → "cyclohexan-1-amine" (IUPAC 2013 P-62.2.3)
-  // For heterocycles: always cite
-  // For benzene: treated as carbocycle for these purposes
-  const alwaysOmitLoc1 = !isHetero && (kind === "ol" || kind === "one");
+  //   - -amine: omit locant 1 → "cyclohexanamine" (IUPAC preferred; PubChem confirms)
+  // For heterocycles: always cite locant (position relative to heteroatom matters)
+  const alwaysOmitLoc1 = !isHetero && (kind === "ol" || kind === "one" || kind === "amine");
   const alwaysCite = isHetero;
 
-  const multi = locants.length;
   const multPfx = multiplierPrefix(multi);
 
   if (multi === 1) {

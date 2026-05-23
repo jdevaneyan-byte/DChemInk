@@ -794,10 +794,14 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
   // ── Ring double bond locants (for cycloalkenes) ───────────────────────────
   let ringDoubleBondLocants: number[] | undefined;
   if (!ring.aromatic && unsatBonds.length > 0) {
+    const ringSize = ring.size;
     ringDoubleBondLocants = unsatBonds.map(([a, b]) => {
       const la = locantOf.get(a)!;
       const lb = locantOf.get(b)!;
-      return Math.min(la, lb);
+      const lo = Math.min(la, lb);
+      const hi = Math.max(la, lb);
+      // Wrap-around bond {1, n}: cite at locant n (the ring-closure position).
+      return lo === 1 && hi === ringSize ? ringSize : lo;
     }).sort((a, b) => a - b);
   }
 

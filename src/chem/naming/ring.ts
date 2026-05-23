@@ -544,7 +544,15 @@ function assignCarbocycleLocants(
       for (const [a, b] of unsatBonds) {
         const la = locantOf.get(a)!;
         const lb = locantOf.get(b)!;
-        unsatLocs.push(Math.min(la, lb));
+        // For ring double bonds: the locant is min(la, lb) EXCEPT when the bond
+        // spans the ring-closing position {1, n} (wrap-around bond). In that case
+        // the locant is n, per IUPAC convention (the "n-ene" bond, not "1-ene").
+        // This prevents, e.g., cyclohexa-1,4-diene from being mislabelled 1,3-diene
+        // via a backward walk that wraps the 1,4-bond across the ring closure.
+        const lo = Math.min(la, lb);
+        const hi = Math.max(la, lb);
+        const isWrapAround = lo === 1 && hi === n;
+        unsatLocs.push(isWrapAround ? n : lo);
       }
       unsatLocs.sort((a, b) => a - b);
 
