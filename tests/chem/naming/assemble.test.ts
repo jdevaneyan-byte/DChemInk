@@ -141,3 +141,50 @@ describe("assembleName (Tier 2 suffix)", () => {
       suffix: { kind: "ol", locants: [1, 2, 3, 4] } })).toBe("butane-1,2,3,4-tetrol");
   });
 });
+
+// ── Euphony: -a- linker rules ─────────────────────────────────────────────────
+describe("assembleName euphony: -a- linker", () => {
+  // The 'a' linker is inserted ONLY when the first unsaturation descriptor is
+  // multiplied (diene, triene …) or when the molecule contains ONLY multiple
+  // triple bonds (diyne, triyne …).
+  // A single ene followed by multiplied ynes does NOT take the 'a'.
+  // PubChem reference: C=CC#CC#CC → hept-1-en-3,5-diyne (no 'a' before single ene).
+
+  it("buta-1,3-diene keeps the -a- (diene = multiplied ene)", () => {
+    // doubles=[1,3] → needA (diene is multiplied first descriptor)
+    expect(assembleName({ chainLen: 4, doubles: [1, 3], triples: [], subs: [] }))
+      .toBe("buta-1,3-diene");
+  });
+
+  it("hepta-1,3,5-triene keeps the -a-", () => {
+    expect(assembleName({ chainLen: 7, doubles: [1, 3, 5], triples: [], subs: [] }))
+      .toBe("hepta-1,3,5-triene");
+  });
+
+  it("hepta-1,3-dien-5-yne keeps the -a- (diene comes first, is multiplied)", () => {
+    expect(assembleName({ chainLen: 7, doubles: [1, 3], triples: [5], subs: [] }))
+      .toBe("hepta-1,3-dien-5-yne");
+  });
+
+  it("hept-1-en-3,5-diyne has NO -a- (single ene, even though diyne is multiplied)", () => {
+    // Bug: current code incorrectly gives hepta-1-en-3,5-diyne.
+    // PubChem-verified: hept-1-en-3,5-diyne (no 'a').
+    expect(assembleName({ chainLen: 7, doubles: [1], triples: [3, 5], subs: [] }))
+      .toBe("hept-1-en-3,5-diyne");
+  });
+
+  it("hepta-1,3-diyne keeps the -a- (only ynes, multiplied)", () => {
+    expect(assembleName({ chainLen: 7, doubles: [], triples: [1, 3], subs: [] }))
+      .toBe("hepta-1,3-diyne");
+  });
+
+  it("pent-1-en-4-yne has NO -a- (single ene + single yne)", () => {
+    expect(assembleName({ chainLen: 5, doubles: [1], triples: [4], subs: [] }))
+      .toBe("pent-1-en-4-yne");
+  });
+
+  it("octa-1,3,5,7-tetraene keeps the -a-", () => {
+    expect(assembleName({ chainLen: 8, doubles: [1, 3, 5, 7], triples: [], subs: [] }))
+      .toBe("octa-1,3,5,7-tetraene");
+  });
+});

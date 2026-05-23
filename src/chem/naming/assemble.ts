@@ -111,10 +111,15 @@ function ending(stem: string, chainLen: number, doubles: number[], triples: numb
   }
 
   const segs: string[] = [];
-  // The 'a' euphonic linker appears before multiplied suffixes (diene, triene, diyne).
-  // A single ene or a single ene + single yne does NOT take the 'a' linker.
-  // e.g. "buta-1,3-diene" (needA=true), "pent-1-en-4-yne" (needA=false).
-  const needA = doubles.length > 1 || triples.length > 1;
+  // The 'a' euphonic linker appears when the FIRST descriptor cited is multiplied
+  // (diene, triene, …) or when only triples are present and they are multiplied
+  // (diyne, triyne, …). A single ene — even when followed by a multiplied yne —
+  // does NOT take the 'a', because the ene descriptor itself is not multiplied.
+  // e.g. "buta-1,3-diene" (diene → needA=true)
+  //      "hept-1-en-3,5-diyne" (single ene first → needA=false)
+  //      "hepta-1,3-diyne" (only triples, multiplied → needA=true)
+  //      "pent-1-en-4-yne" (single ene + single yne → needA=false)
+  const needA = doubles.length > 1 || (doubles.length === 0 && triples.length > 1);
   const head = needA ? `${stem}a` : stem;
 
   if (doubles.length) {
