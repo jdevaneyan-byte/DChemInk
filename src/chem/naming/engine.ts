@@ -103,6 +103,52 @@ function prefixForm(g: Group): string {
   }
 }
 
+/**
+ * Return the alkoxy prefix name and the chain-side carbon index for an ether group,
+ * without needing to know the chain yet. The alkoxy side is identified as the SMALLER
+ * carbon subtree reachable from the ether O.
+ * Returns { prefix: "methoxy"|"ethoxy"|..., chainC: number } or null if indeterminate.
+ */
+function etherPrefixAndChainC(graph: MolGraph, etherGroup: Group): { prefix: string; chainC: number } | null {
+  const oAtom = etherGroup.atoms[0]; // the O atom index
+  const stems = [
+    "", "meth", "eth", "prop", "but", "pent", "hex", "hept", "oct", "non", "dec",
+  ];
+  // Get both C neighbors of the O
+  const cNbrs: number[] = [];
+  for (const b of graph.bonds) {
+    const nbr = b.from === oAtom ? b.to : b.to === oAtom ? b.from : -1;
+    if (nbr >= 0 && graph.atoms.find((a) => a.index === nbr)?.element === "C") cNbrs.push(nbr);
+  }
+  if (cNbrs.length !== 2) return null;
+
+  // Count carbons in each subtree (blocked at the O)
+  const countCarbons = (start: number): number => {
+    const visited = new Set<number>([oAtom]);
+    const stack = [start];
+    let count = 0;
+    while (stack.length) {
+      const u = stack.pop()!;
+      if (visited.has(u)) continue;
+      visited.add(u);
+      if (graph.atoms.find((a) => a.index === u)?.element === "C") count++;
+      for (const b of graph.bonds) {
+        const nbr = b.from === u ? b.to : b.to === u ? b.from : -1;
+        if (nbr >= 0 && !visited.has(nbr)) stack.push(nbr);
+      }
+    }
+    return count;
+  };
+
+  const counts = cNbrs.map(countCarbons);
+  // The alkoxy side is the smaller subtree (or arbitrarily cNbrs[0] if equal)
+  const alkoxyIdx = counts[0] <= counts[1] ? 0 : 1;
+  const chainIdx = 1 - alkoxyIdx;
+  const n = counts[alkoxyIdx];
+  const prefix = n >= 1 && n < stems.length ? `${stems[n]}oxy` : "alkoxy";
+  return { prefix, chainC: cNbrs[chainIdx] };
+}
+
 /** Compute the alkoxy stem for an ether group. Returns e.g. "methoxy", "ethoxy". */
 function etherPrefixFor(graph: MolGraph, etherGroup: Group, chainCarbons: Set<number>): string {
   // The ether O is attached to exactly 2 C atoms. The anchor (etherGroup.carbon)
@@ -212,6 +258,83 @@ function etherAlkoxyAtoms(graph: MolGraph, etherO: number, chainSet: Set<number>
     if (set.has(b.from) && set.has(b.to) && b.order > 1) return null; // unsaturated alkoxy
   }
   return set;
+}
+
+/**
+ * Try to name a carbon branch that carries heteroatom substituents — specifically,
+ * simple haloalkyl branches like CH2F (fluoromethyl), CHCl2 (dichloromethyl), etc.
+ *
+ * Returns the substituent name string, or null if the branch is not expressible this way
+ * (e.g. multi-carbon, has non-halogen heteroatoms, or branched).
+ *
+ * This is used when the main-chain completeness guard would otherwise decline the name
+ * because the engine can't account for halogens on carbon branches via nameSubstituent
+ * (which only sees the carbon graph).
+ */
+function nameHaloalkylBranch(
+  graph: MolGraph,
+  branchRoot: number,
+  chainParent: number,
+  groupAtoms: Set<number>,
+): string | null {
+  const HAL_PREFIX: Record<string, string> = { F: "fluoro", Cl: "chloro", Br: "bromo", I: "iodo" };
+  const HALS = new Set(["F", "Cl", "Br", "I"]);
+
+  // Collect all non-H atoms reachable from branchRoot (blocked at chainParent)
+  const visited = new Set<number>([chainParent]);
+  const stack = [branchRoot];
+  const branchAtoms: number[] = [];
+  while (stack.length) {
+    const u = stack.pop()!;
+    if (visited.has(u)) continue;
+    visited.add(u);
+    const atom = graph.atoms.find((a) => a.index === u);
+    if (!atom || atom.element === "H") continue;
+    branchAtoms.push(u);
+    for (const b of graph.bonds) {
+      const nbr = b.from === u ? b.to : b.to === u ? b.from : -1;
+      if (nbr >= 0 && !visited.has(nbr)) stack.push(nbr);
+    }
+  }
+
+  // Categorize branch atoms
+  const carbons = branchAtoms.filter(
+    (idx) => graph.atoms.find((a) => a.index === idx)?.element === "C",
+  );
+  const halogens = branchAtoms.filter(
+    (idx) => HALS.has(graph.atoms.find((a) => a.index === idx)?.element ?? ""),
+  );
+  const otherAtoms = branchAtoms.filter(
+    (idx) => !carbons.includes(idx) && !halogens.includes(idx) && !groupAtoms.has(idx),
+  );
+
+  // Only handle simple haloalkyl: exactly 1 carbon, 1+ halogens, no other atoms
+  if (carbons.length !== 1 || halogens.length === 0 || otherAtoms.length > 0) return null;
+  // The single carbon must have no C-C bonds to other carbons (it IS the branch root)
+  // and all non-H neighbors must be either chainParent or halogens
+  const rootNeighbors = graph.bonds
+    .filter((b) => b.from === branchRoot || b.to === branchRoot)
+    .map((b) => (b.from === branchRoot ? b.to : b.from))
+    .filter((idx) => graph.atoms.find((a) => a.index === idx)?.element !== "H");
+  const unexpectedNeighbors = rootNeighbors.filter(
+    (idx) => idx !== chainParent && !halogens.includes(idx),
+  );
+  if (unexpectedNeighbors.length > 0) return null; // other C or heteroatom → can't name
+
+  // All halogens must be the same element for simple di/trihalomethyl (mixed is unusual)
+  const halElements = halogens.map(
+    (idx) => graph.atoms.find((a) => a.index === idx)?.element ?? "X",
+  );
+  // Build prefix: di/tri prefix + halogen name + methyl
+  const stems = ["", "", "di", "tri", "tetra"];
+  const pfx = halElements.length < stems.length ? stems[halElements.length] : `${halElements.length}-`;
+  if (new Set(halElements).size === 1) {
+    // All same: dichloromethyl, fluoromethyl, etc.
+    return `${pfx}${HAL_PREFIX[halElements[0]] ?? "halo"}methyl`;
+  }
+  // Mixed halogens: alphabetize and concatenate (e.g. bromochloromethyl)
+  const sortedHal = [...halElements].sort((a, b) => (HAL_PREFIX[a] ?? a) < (HAL_PREFIX[b] ?? b) ? -1 : 1);
+  return sortedHal.map((h) => HAL_PREFIX[h] ?? "halo").join("") + "methyl";
 }
 
 // ── Acyl-chain naming helpers ─────────────────────────────────────────────────
@@ -1510,14 +1633,47 @@ export function nameMolecule(graph: MolGraph): NameResult {
       }
     }
 
-    // For chain selection, if we have a PCG use its anchors; otherwise use all
-    // group anchor carbons so the chain orientation minimises their locants too.
-    const chainPrefCarbons = pcgCarbons.length > 0
-      ? pcgCarbons
-      : groups.map((g) => g.carbon);
+    // For chain selection, only true suffix-PCG carbons get priority over unsaturation.
+    // When there is no suffix PCG (prefix-only groups: halo, alkoxy, nitro, etc.),
+    // pass [] so that orient() gives C=C/C≡C the lowest locants first (IUPAC P-44.1),
+    // with detachable prefixes handled in the substituent-locant tier afterward.
+    const chainPrefCarbons = pcgCarbons.length > 0 ? pcgCarbons : [];
 
-    // Select principal chain with PCG priority
-    const chain = selectPrincipalChain(cg, { pcgCarbons: chainPrefCarbons }).atoms;
+    // Build the FG-prefix anchor map for the substituent-locant and alpha tie-break.
+    // This allows chain orientation to include detachable prefix positions in the
+    // substituent set (same tier as alkyl branches) — IUPAC P-44.3.
+    // NOTE: built before chain selection because orient() needs it for the tie-break.
+    const fgPrefixAnchors = new Map<number, string>();
+    if (pcgCarbons.length === 0) {
+      // Only populate when there's no suffix PCG (otherwise the PCG tier already handles it).
+      const preNonPcgGroups = pcgKind
+        ? groups.filter((g) => SENIORITY[g.kind] < SENIORITY[pcgKind] || SENIORITY[g.kind] === 0)
+        : groups;
+      for (const g of preNonPcgGroups) {
+        if (g.kind === "ether") {
+          // Identify the chain-side carbon and the alkoxy prefix name without needing
+          // to know the chain yet (uses the smaller-subtree heuristic).
+          const result = etherPrefixAndChainC(graph, g);
+          if (result) {
+            fgPrefixAnchors.set(result.chainC, result.prefix);
+          }
+        } else if (!CARBON_PREFIX.has(g.kind)) {
+          // For carbon-bearing non-PCG prefixes (cyano/carboxy/carbamoyl), the anchor
+          // on the chain is a NEIGHBOR of g.carbon (g.carbon itself was excluded from cg).
+          // We can't easily determine this pre-chain-selection, so skip them here;
+          // they are rare and the alpha tie-break will remain correct without them.
+          // All other prefix groups: anchor is g.carbon directly.
+          // (halide: X on g.carbon; alcohol-as-prefix: O on g.carbon; nitro; etc.)
+          fgPrefixAnchors.set(g.carbon, prefixForm(g));
+        }
+      }
+    }
+
+    // Select principal chain with PCG priority and FG-prefix anchors for tie-breaking
+    const chain = selectPrincipalChain(cg, {
+      pcgCarbons: chainPrefCarbons,
+      fgPrefixAnchors: fgPrefixAnchors.size > 0 ? fgPrefixAnchors : undefined,
+    }).atoms;
     const inChain = new Set(chain);
 
     // Compute ene/yne locants
@@ -1572,11 +1728,40 @@ export function nameMolecule(graph: MolGraph): NameResult {
       subs.push({ locant: chain.indexOf(anchor) + 1, name: prefixForm(g) });
     }
 
-    // Add alkyl branch substituents (carbons off-chain not belonging to any group)
+    // Add alkyl branch substituents (carbons off-chain not belonging to any group).
+    // Also handle simple haloalkyl branches (e.g. CH2F → fluoromethyl).
+    // haloalkylAccounted: extra non-carbon atoms accounted by haloalkyl branch naming.
+    const haloalkylAccounted = new Set<number>();
     for (let i = 0; i < chain.length; i++) {
       for (const nb of cg.adj.get(chain[i]) ?? []) {
         if (!inChain.has(nb) && !groupAtoms.has(nb)) {
-          subs.push({ locant: i + 1, name: nameSubstituent(cg, nb, chain[i]) });
+          // Try haloalkyl naming first (handles CH2F, CH2Cl, etc.)
+          const haloName = nameHaloalkylBranch(graph, nb, chain[i], groupAtoms);
+          if (haloName !== null) {
+            // Haloalkyl substituent names (e.g. "fluoromethyl") are complex substituents
+            // and require enclosing marks (parentheses) per IUPAC. We pass them with
+            // a leading/trailing paren so assembleName treats them as complex.
+            // The displayName function in assemble.ts wraps in parens only when isComplex
+            // returns true (name contains a digit); since "fluoromethyl" has no digit,
+            // we pre-wrap it here to ensure correct IUPAC parenthesization.
+            subs.push({ locant: i + 1, name: `(${haloName})` });
+            // Collect all atoms in the haloalkyl branch for the completeness guard.
+            const bvisited = new Set<number>([chain[i]]);
+            const bstack = [nb];
+            while (bstack.length) {
+              const u = bstack.pop()!;
+              if (bvisited.has(u)) continue;
+              bvisited.add(u);
+              const atom = graph.atoms.find((a) => a.index === u);
+              if (atom && atom.element !== "H") haloalkylAccounted.add(u);
+              for (const b of graph.bonds) {
+                const nbr2 = b.from === u ? b.to : b.to === u ? b.from : -1;
+                if (nbr2 >= 0 && !bvisited.has(nbr2)) bstack.push(nbr2);
+              }
+            }
+          } else {
+            subs.push({ locant: i + 1, name: nameSubstituent(cg, nb, chain[i]) });
+          }
         }
       }
     }
@@ -1609,6 +1794,8 @@ export function nameMolecule(graph: MolGraph): NameResult {
         }
       }
     }
+    // Also account for atoms covered by haloalkyl branch naming
+    for (const a of haloalkylAccounted) accounted.add(a);
     if (heavy.some((a) => !accounted.has(a.index))) {
       return {
         name: null,

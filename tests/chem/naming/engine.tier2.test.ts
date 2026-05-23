@@ -201,3 +201,86 @@ describe("Tier-1 regression (engine.tier2.test)", () => {
     expect(name("CC=CCC")).toBe("pent-2-ene");
   });
 });
+
+// ── Locant priority: unsaturation > detachable prefixes ──────────────────────
+//
+// IUPAC 2013 P-44.1: when there is no suffix-PCG, C=C/C≡C gets lowest locants
+// BEFORE detachable prefixes. The engine was passing prefix-group carbons as
+// pcgCarbons, incorrectly giving them PCG-level priority over unsaturation.
+//
+// PubChem-verified expected names below.
+describe("locant priority: unsaturation beats prefix groups (no suffix PCG)", () => {
+  it("C=CCF → 3-fluoroprop-1-ene (C=C gets locant 1, not F)", () => {
+    // Bug gave: 1-fluoroprop-2-ene
+    expect(name("C=CCF")).toBe("3-fluoroprop-1-ene");
+  });
+
+  it("C#CCC(C)Br → 4-bromopent-1-yne (C≡C gets locant 1)", () => {
+    // Bug gave: 2-bromopent-4-yne
+    expect(name("C#CCC(C)Br")).toBe("4-bromopent-1-yne");
+  });
+
+  it("C=C(C)CBr → 3-bromo-2-methylprop-1-ene (C=C gets locant 1)", () => {
+    // Bug gave: 1-bromo-2-methylprop-2-ene
+    expect(name("C=C(C)CBr")).toBe("3-bromo-2-methylprop-1-ene");
+  });
+
+  it("C#CC(C)F → 3-fluorobut-1-yne (C≡C gets locant 1)", () => {
+    // Bug gave: 2-fluorobut-3-yne
+    expect(name("C#CC(C)F")).toBe("3-fluorobut-1-yne");
+  });
+
+  it("C#CC#CCCl → 5-chloropenta-1,3-diyne (C≡C gets locants 1,3)", () => {
+    // Bug gave: 1-chloropenta-2,4-diyne
+    expect(name("C#CC#CCCl")).toBe("5-chloropenta-1,3-diyne");
+  });
+
+  it("C=CC(C)(C)CBr → 4-bromo-3,3-dimethylbut-1-ene (C=C locant 1)", () => {
+    // Bug gave: 1-bromo-2,2-dimethylbut-3-ene
+    expect(name("C=CC(C)(C)CBr")).toBe("4-bromo-3,3-dimethylbut-1-ene");
+  });
+
+  // Sanity: lone prefix on saturated chain still gets lowest locant
+  it("CC(Cl)CCCC → 2-chlorohexane (no unsaturation; prefix gets lowest locant)", () => {
+    expect(name("CC(Cl)CCCC")).toBe("2-chlorohexane");
+  });
+});
+
+// ── Locant priority: FG prefixes enter the detachable-prefix locant + alpha tie-break ──
+//
+// When unsaturation locants tie between two directions, the prefix set (including
+// FG prefixes like methoxy, chloro) must be considered in the next tier.
+// And alphabetical tie-break must include FG prefix names.
+describe("locant priority: FG prefixes in tie-break", () => {
+  // COC(C)C(C)C → 2-methoxy-3-methylbutane
+  // Both directions give same unsaturation locants (none). Prefix locants:
+  // direction A: methoxy@2, methyl@3 → set {2,3}
+  // direction B: methoxy@3, methyl@2 → set {2,3} (tie on set)
+  // Alpha tie-break: methoxy (m-e-t-h-O) < methyl (m-e-t-h-Y) → methoxy gets lower locant
+  // → methoxy@2, methyl@3 → 2-methoxy-3-methylbutane
+  it("COC(C)C(C)C → 2-methoxy-3-methylbutane (alpha tie: methoxy < methyl)", () => {
+    // Bug gave: 3-methoxy-2-methylbutane (FG prefix not in locant comparison)
+    expect(name("COC(C)C(C)C")).toBe("2-methoxy-3-methylbutane");
+  });
+});
+
+// ── Chain selection: FG prefix carbons must not distort parent chain ──────────
+//
+// CCC(CC)CF → CH2F is a substituent on the longest C5 chain.
+// When F is wrongly treated as PCG, C3 (bearing CH2F) becomes a chain terminus,
+// making a 4-carbon chain selected over the true longest 5-carbon chain.
+describe("chain selection: prefix FG does not distort parent chain", () => {
+  it("CCC(CC)CF → 3-(fluoromethyl)pentane (C5 is parent; CH2F is substituent)", () => {
+    // Bug gave: 2-ethyl-1-fluorobutane (wrong C4 parent selected due to F-as-PCG)
+    expect(name("CCC(CC)CF")).toBe("3-(fluoromethyl)pentane");
+  });
+});
+
+// ── Euphony: hept-1-en-3,5-diyne (no -a- before single ene) ─────────────────
+describe("euphony: no -a- before single ene when followed by multiplied yne", () => {
+  it("C=CC#CC#CC → hept-1-en-3,5-diyne (no 'a' linker)", () => {
+    // Bug gave: hepta-1-en-3,5-diyne
+    // PubChem IUPAC: hept-1-en-3,5-diyne
+    expect(name("C=CC#CC#CC")).toBe("hept-1-en-3,5-diyne");
+  });
+});

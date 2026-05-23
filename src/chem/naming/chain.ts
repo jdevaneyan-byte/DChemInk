@@ -95,14 +95,19 @@ function multipleBondLocants(path: number[], cg: CarbonGraph): number[] {
   return locs;
 }
 
-/** Substituent attachment locants for a directed path (ascending). */
-function substituentLocants(path: number[], cg: CarbonGraph): number[] {
+/**
+ * Substituent attachment locants for a directed path (ascending).
+ * Includes carbon branches (via cg) AND any FG-prefix anchors supplied as
+ * fgAnchors (a set of carbon indices bearing detachable heteroatom prefixes).
+ */
+function substituentLocants(path: number[], cg: CarbonGraph, fgAnchors?: Set<number>): number[] {
   const inChain = new Set(path);
   const locs: number[] = [];
   for (let i = 0; i < path.length; i++) {
     for (const nb of cg.adj.get(path[i]) ?? []) {
       if (!inChain.has(nb)) locs.push(i + 1);
     }
+    if (fgAnchors?.has(path[i])) locs.push(i + 1);
   }
   return locs.sort((a, b) => a - b);
 }
@@ -127,14 +132,24 @@ function alphaKey(name: string): string {
   return name.replace(/^\((.*)\)$/, "$1").replace(/^[\d,()\-\s]+/, "");
 }
 
-/** Ordered (by alphabetical name) substituent locants for a directed path. */
-function substituentsByAlpha(path: number[], cg: CarbonGraph): { locant: number; key: string }[] {
+/**
+ * Ordered (by alphabetical name) substituent locants for a directed path.
+ * fgPrefixNames maps carbon index → prefix display name (e.g. "chloro", "methoxy")
+ * for FG-prefix substituents that are not carbon branches in cg.
+ */
+function substituentsByAlpha(
+  path: number[],
+  cg: CarbonGraph,
+  fgPrefixNames?: Map<number, string>,
+): { locant: number; key: string }[] {
   const inChain = new Set(path);
   const out: { locant: number; key: string }[] = [];
   for (let i = 0; i < path.length; i++) {
     for (const nb of cg.adj.get(path[i]) ?? []) {
       if (!inChain.has(nb)) out.push({ locant: i + 1, key: alphaKey(nameSubstituent(cg, nb, path[i])) });
     }
+    const fgName = fgPrefixNames?.get(path[i]);
+    if (fgName !== undefined) out.push({ locant: i + 1, key: alphaKey(fgName) });
   }
   return out.sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : x.locant - y.locant));
 }
@@ -142,10 +157,16 @@ function substituentsByAlpha(path: number[], cg: CarbonGraph): { locant: number;
 /**
  * Final alphabetical tie-break: the substituent cited first alphabetically must
  * receive the lower locant. Returns <0 if `path` wins, >0 if `rev` wins, 0 tie.
+ * fgPrefixNames includes detachable FG prefix names for the tie-break.
  */
-function compareByFirstAlpha(path: number[], rev: number[], cg: CarbonGraph): number {
-  const a = substituentsByAlpha(path, cg);
-  const b = substituentsByAlpha(rev, cg);
+function compareByFirstAlpha(
+  path: number[],
+  rev: number[],
+  cg: CarbonGraph,
+  fgPrefixNames?: Map<number, string>,
+): number {
+  const a = substituentsByAlpha(path, cg, fgPrefixNames);
+  const b = substituentsByAlpha(rev, cg, fgPrefixNames);
   const len = Math.min(a.length, b.length);
   for (let i = 0; i < len; i++) {
     if (a[i].key !== b[i].key) return a[i].key < b[i].key ? -1 : 1;
@@ -168,10 +189,19 @@ function countPcgOnPath(path: number[], pcg: Set<number>): number {
 
 export interface SelectPrincipalChainOpts {
   pcgCarbons?: number[]; // atom indices of principal characteristic group anchor carbons
+  /** Map of chain-carbon index → detachable prefix display name (e.g. "chloro", "methoxy").
+   *  These anchors are included in the substituent-locant and alpha-tie-break comparisons
+   *  so that FG prefixes participate in the same priority tier as alkyl branches. */
+  fgPrefixAnchors?: Map<number, string>;
 }
 
 /** Pick the better numbering direction of one candidate chain. */
-function orient(path: number[], cg: CarbonGraph, pcg?: Set<number>): number[] {
+function orient(
+  path: number[],
+  cg: CarbonGraph,
+  pcg?: Set<number>,
+  fgPrefixAnchors?: Map<number, string>,
+): number[] {
   const rev = [...path].reverse();
 
   // 0 (Tier-2). PCG gets the lowest locants (before multiple bonds).
@@ -180,25 +210,40 @@ function orient(path: number[], cg: CarbonGraph, pcg?: Set<number>): number[] {
     if (byPcg !== 0) return byPcg < 0 ? path : rev;
   }
 
-  const a = { mb: multipleBondLocants(path, cg), sub: substituentLocants(path, cg) };
-  const b = { mb: multipleBondLocants(rev, cg), sub: substituentLocants(rev, cg) };
+  // Derive the FG-anchor set for use in substituent locant counting.
+  const fgSet = fgPrefixAnchors && fgPrefixAnchors.size > 0
+    ? new Set(fgPrefixAnchors.keys())
+    : undefined;
+
+  const a = {
+    mb: multipleBondLocants(path, cg),
+    sub: substituentLocants(path, cg, fgSet),
+  };
+  const b = {
+    mb: multipleBondLocants(rev, cg),
+    sub: substituentLocants(rev, cg, fgSet),
+  };
   // 1. Lower locants to the combined set of multiple bonds.
   const byMb = compareLocants(a.mb, b.mb);
   if (byMb !== 0) return byMb < 0 ? path : rev;
-  // 2. Bug 4: on a combined-set tie, double bonds (ene) get the lower locants.
+  // 2. On a combined-set tie, double bonds (ene) get the lower locants.
   const byEne = compareLocants(doubleBondLocants(path, cg), doubleBondLocants(rev, cg));
   if (byEne !== 0) return byEne < 0 ? path : rev;
-  // 3. Lower locants to the substituent set.
+  // 3. Lower locants to the detachable-prefix set (alkyl branches + FG prefixes).
   const bySub = compareLocants(a.sub, b.sub);
   if (bySub !== 0) return bySub < 0 ? path : rev;
-  // 4. Bug 3: on a substituent-set tie, the alphabetically-first substituent
-  //    gets the lower locant.
-  const byAlpha = compareByFirstAlpha(path, rev, cg);
+  // 4. On a substituent-set tie, the alphabetically-first substituent (including
+  //    FG prefix names) gets the lower locant.
+  const byAlpha = compareByFirstAlpha(path, rev, cg, fgPrefixAnchors);
   return byAlpha <= 0 ? path : rev;
 }
 
 export function selectPrincipalChain(cg: CarbonGraph, opts?: SelectPrincipalChainOpts): ChainChoice {
   const pcg = new Set(opts?.pcgCarbons ?? []);
+  const fgPrefixAnchors = opts?.fgPrefixAnchors;
+  const fgSet = fgPrefixAnchors && fgPrefixAnchors.size > 0
+    ? new Set(fgPrefixAnchors.keys())
+    : undefined;
 
   // Candidate pool: when PCG carbons are present, prefer chains that contain the most.
   // Fall back to longest chains when no PCG info is given.
@@ -222,7 +267,9 @@ export function selectPrincipalChain(cg: CarbonGraph, opts?: SelectPrincipalChai
     pool = longestCarbonChains(cg);
   }
 
-  const candidates = pool.map((p) => orient(p, cg, pcg.size > 0 ? pcg : undefined));
+  const candidates = pool.map((p) =>
+    orient(p, cg, pcg.size > 0 ? pcg : undefined, fgPrefixAnchors),
+  );
   candidates.sort((p, q) => {
     // When PCG is present, the orient() step already resolved direction.
     // Sort candidates by PCG locants first (lowest set wins).
@@ -234,13 +281,13 @@ export function selectPrincipalChain(cg: CarbonGraph, opts?: SelectPrincipalChai
     if (mbCount !== 0) return mbCount; // more multiple bonds first
     const mb = compareLocants(multipleBondLocants(p, cg), multipleBondLocants(q, cg));
     if (mb !== 0) return mb;
-    const subCount = substituentLocants(q, cg).length - substituentLocants(p, cg).length;
+    const subCount = substituentLocants(q, cg, fgSet).length - substituentLocants(p, cg, fgSet).length;
     if (subCount !== 0) return subCount; // more substituents first
-    const bySub = compareLocants(substituentLocants(p, cg), substituentLocants(q, cg));
+    const bySub = compareLocants(substituentLocants(p, cg, fgSet), substituentLocants(q, cg, fgSet));
     if (bySub !== 0) return bySub;
     // Final tie-break: prefer the chain giving the alphabetically-first
     // substituent the lower locant.
-    return compareByFirstAlpha(p, q, cg);
+    return compareByFirstAlpha(p, q, cg, fgPrefixAnchors);
   });
   return { atoms: candidates[0] };
 }
