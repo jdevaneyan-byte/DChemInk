@@ -81,10 +81,13 @@ export function perceiveRing(graph: MolGraph): RingInfo | null {
   const allSp2 = cycleAtoms.every((idx) => {
     const a = atomById.get(idx);
     if (!a) return false;
-    // sp2 ring atoms: C has 0 or 1 H (not 2); N in pyridine has 0 H
-    // sp3 ring atoms: C has 2 H; N in piperidine has 1 H
+    // sp2 ring atoms: C has 0 or 1 H (not 2); N in pyridine has 0 H; pyrrole N has 1 H (max)
+    // sp3 ring atoms: C has 2 H; N in piperidine has 1 H but also contributes to saturation
+    // We distinguish pyrrole-N (aromatic, 1H) vs piperidine-N (sp3, 1H) by double-bond count
     if (a.element === "C") return a.hydrogens <= 1;
-    if (a.element === "N") return a.hydrogens === 0;
+    // N in aromatic rings: pyridine-type N has 0 H; pyrrole-type N has 1 H (lone pair in ring)
+    // piperidine N (sp3) also has 1 H — must distinguish by checking double bonds
+    if (a.element === "N") return a.hydrogens <= 1; // both pyridine-N and pyrrole-N qualify
     if (a.element === "O") return a.hydrogens === 0; // aromatic O (furan) has 0 H
     if (a.element === "S") return a.hydrogens === 0; // aromatic S (thiophene) has 0 H
     return true;
