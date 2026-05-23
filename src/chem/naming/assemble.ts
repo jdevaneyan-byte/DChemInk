@@ -293,3 +293,300 @@ export function anhydrideName(side1: string, side2: string): string {
   const [a, b] = side1 < side2 ? [side1, side2] : [side2, side1];
   return `${a} ${b} anhydride`;
 }
+
+// ── Ring-parent assembly (Tier 3) ────────────────────────────────────────────
+
+export type AddedCarbonSuffix = "carboxylic acid" | "carbonitrile" | "carbaldehyde";
+
+export interface RingAssemblyInput {
+  parent: string;           // "cyclohexane" | "benzene" | "pyridine" | etc.
+  subs: { locant: number; name: string }[];
+  ringDoubleBondLocants?: number[];  // cycloalkene/diene locants (ascending)
+  suffix?: SuffixSpec;               // -ol/-one/-amine on a ring atom
+  addedCarbon?: { kind: AddedCarbonSuffix; locants: number[] }; // exocyclic group
+  retainedAromatic?: string;         // phenol/aniline/toluene/etc. — overrides parent
+}
+
+/**
+ * Retained benzene names that permit further substitution.
+ * These keep the retained parent even when there are additional substituents.
+ */
+const RETAINED_ALLOWS_SUBS = new Set(["phenol", "aniline", "benzoic acid", "benzaldehyde", "benzonitrile", "benzamide"]);
+
+/**
+ * Benzene + added-carbon suffix → retained name.
+ * benzene + carboxylic acid → benzoic acid
+ * benzene + carbaldehyde    → benzaldehyde
+ * benzene + carbonitrile    → benzonitrile
+ */
+const BENZENE_ADDED_CARBON_RETAINED: Record<AddedCarbonSuffix, string> = {
+  "carboxylic acid": "benzoic acid",
+  "carbaldehyde": "benzaldehyde",
+  "carbonitrile": "benzonitrile",
+};
+
+/**
+ * Assemble a ring parent name with substituents, unsaturation, suffix, and
+ * added-carbon groups.
+ *
+ * Rules:
+ * - Single substituent on any ring → no locant prefix (methylcyclohexane)
+ * - Two or more substituents → locants (1,2-dimethylcyclohexane)
+ * - Cyclohexene: locant 1 omitted when there is exactly one double bond and the ring is
+ *   "cyclohexane" style (parent ends in "ane") → "cyclohexene"
+ * - Cyclohexa-1,3-diene: two double bonds
+ * - -ol/-one/-amine suffix with e-elision (cyclohexanol, cyclohexanone)
+ * - Added-carbon: "cyclohexanecarboxylic acid", "benzene→benzoic acid" (retained)
+ * - retainedAromatic: direct override (phenol, aniline, etc.)
+ */
+export function assembleRingName(input: RingAssemblyInput): string {
+  const { parent, subs, ringDoubleBondLocants, suffix, addedCarbon, retainedAromatic } = input;
+
+  // Whether locants are always required for substituents (heterocycles + retained aromatics)
+  const isHeteroCycleParent = !parent.startsWith("cyclo") && parent !== "benzene";
+
+  // ── Retained name override ──────────────────────────────────────────────────
+  if (retainedAromatic) {
+    // The retained name is the base; add substituent prefixes if any
+    if (subs.length === 0) return retainedAromatic;
+    // For retained names that allow further substitution (phenol, aniline, etc.),
+    // prepend substituent locants — always cite locants for retained aromatics
+    if (RETAINED_ALLOWS_SUBS.has(retainedAromatic)) {
+      const pfx = prefixSegmentRing(subs, true); // always cite locants
+      return `${pfx}${retainedAromatic}`;
+    }
+    // Retained names that don't allow substitution (toluene, styrene) → systematic fallback
+    // should be handled by engine before calling assembleRingName; here just return
+    return retainedAromatic;
+  }
+
+  // ── Benzene + added-carbon → retained ────────────────────────────────────────
+  if (parent === "benzene" && addedCarbon) {
+    const retained = BENZENE_ADDED_CARBON_RETAINED[addedCarbon.kind];
+    if (retained) {
+      if (subs.length === 0) return retained;
+      // e.g. 4-chlorobenzoic acid (substituted benzoic acid)
+      const pfx = prefixSegmentRing(subs);
+      return `${pfx}${retained}`;
+    }
+  }
+
+  // ── Build the base parent name ────────────────────────────────────────────────
+  // For carbocycles: handle unsaturation (cycloalkene/diene)
+  // For benzene/heterocycles: no unsaturation modifications
+  let baseName = parent;
+
+  if (ringDoubleBondLocants && ringDoubleBondLocants.length > 0) {
+    // Modify the carbocycle parent: cyclohexane → cyclohex-1-ene / cyclohexa-1,3-diene
+    // parent ends in "ane" (cyclohexane, cyclopentane, etc.)
+    if (parent.endsWith("ane")) {
+      const stem = parent.slice(0, -3); // drop "ane"
+      if (ringDoubleBondLocants.length === 1) {
+        const loc = ringDoubleBondLocants[0];
+        // For cyclohexene: locant 1 is omitted (it's the default starting point)
+        // Actually, IUPAC 2013 requires the locant: cyclohex-1-ene is correct but
+        // PubChem uses "cyclohexene" for cyclohex-1-ene. We use "cyclohexene".
+        // For locant > 1, cite the locant: cyclohex-2-ene
+        if (loc === 1) {
+          baseName = `${stem}ene`;
+        } else {
+          baseName = `${stem}-${loc}-ene`;
+        }
+      } else {
+        // Multiple double bonds: cyclohexa-1,3-diene
+        const needA = parent.endsWith("ane"); // always true here
+        const stemA = needA ? `${stem}a` : stem;
+        const mult = multiplierPrefix(ringDoubleBondLocants.length);
+        baseName = `${stemA}-${ringDoubleBondLocants.join(",")}-${mult}ene`;
+      }
+    }
+  }
+
+  // ── Apply suffix (on ring atom: -ol, -one, -amine) ───────────────────────────
+  // Heterocycles and carbocycles both use suffix-on-ring; locants are always cited
+  // for rings (ring position 1 is the heteroatom, not the PCG for hetero rings).
+  if (suffix) {
+    baseName = attachRingSuffix(baseName, suffix, parent);
+  }
+
+  // ── Apply added-carbon suffix ─────────────────────────────────────────────────
+  if (addedCarbon) {
+    const { kind, locants } = addedCarbon;
+    // "cyclohexanecarboxylic acid" — no e-elision before "carbo..."
+    // The locant of the exocyclic group is cited when > 1 or when the parent is a
+    // heterocycle (since the numbering matters for position on the ring).
+    const locantStr = shouldCiteAddedCarbonLocant(locants, baseName, parent)
+      ? `-${locants.join(",")}-`
+      : "";
+    // Reconstruct: if baseName was modified by suffix we already handled that;
+    // added-carbon replaces the suffix on carboxylic acid etc.
+    // The added-carbon appends to the ring base (not to a suffix-modified name).
+    // Re-derive the ring base without suffix:
+    let ringBase = buildUnsaturatedBase(parent, ringDoubleBondLocants);
+    if (locantStr) {
+      baseName = `${ringBase}${locantStr}${kind}`;
+    } else {
+      baseName = `${ringBase}${kind}`;
+    }
+  }
+
+  // ── Substituent prefix ────────────────────────────────────────────────────────
+  if (subs.length === 0) return baseName;
+
+  // Always cite locants for heterocycles (position matters relative to heteroatom),
+  // or when there's also a suffix (PCG at position 1, substituents need position info),
+  // or when there are multiple substituents.
+  const hasSuffix = !!suffix || !!addedCarbon;
+  const pfx = prefixSegmentRing(subs, isHeteroCycleParent || hasSuffix);
+  return `${pfx}${baseName}`;
+}
+
+/**
+ * Determine whether the added-carbon locant should be cited.
+ * Locant is cited when:
+ *  - The ring is a heterocycle (locant conveys position relative to heteroatom)
+ *  - The ring is benzene and locant ≠ 1 (but benzoic acid is already handled by retained)
+ *  - For carbocycles: locant 1 is omitted (only one possible position when no subs),
+ *    but cite when there are multiple possible positions (only relevant for dicarboxylic
+ *    rings, which we'd handle separately).
+ */
+function shouldCiteAddedCarbonLocant(
+  locants: number[],
+  _baseName: string,
+  parent: string,
+): boolean {
+  // Heterocycles always cite the locant
+  if (!parent.startsWith("cyclo") && parent !== "benzene") return true;
+  // Benzene: benzoic acid is already handled via retained; shouldn't reach here
+  // Carbocycles: single locant 1 → omit; otherwise cite
+  if (locants.length === 1 && locants[0] === 1) return false;
+  return locants.length > 1 || (locants.length === 1 && locants[0] !== 1);
+}
+
+/** Build the ring base (possibly modified for unsaturation) without adding suffix. */
+function buildUnsaturatedBase(parent: string, doubles?: number[]): string {
+  if (!doubles || doubles.length === 0) return parent;
+  if (!parent.endsWith("ane")) return parent;
+  const stem = parent.slice(0, -3);
+  if (doubles.length === 1 && doubles[0] === 1) return `${stem}ene`;
+  if (doubles.length === 1) return `${stem}-${doubles[0]}-ene`;
+  const stemA = `${stem}a`;
+  const mult = multiplierPrefix(doubles.length);
+  return `${stemA}-${doubles.join(",")}-${mult}ene`;
+}
+
+/**
+ * Attach a suffix (-ol, -one, -amine) to a ring parent name.
+ * Rules:
+ *  - e-elision before vowel-initial suffixes (ol, one, amine — but amine starts
+ *    with vowel only in a sense; actually "amine" starts with 'a' = vowel)
+ *  - Locants: for carbocycles, locant 1 is omitted for -ol and -one (unique);
+ *    for heterocycles, always cite the locant.
+ *  - cyclohexanone: the 'e' from 'ane' is dropped → "cyclohexan" + "one"
+ *  - cyclohexanol: 'e' dropped → "cyclohexan" + "ol"
+ *  - cyclohexan-1-amine: 'e' dropped → "cyclohexan" + "-1-amine" (with locant)
+ *  - pyridin-3-ol: 'e' dropped, locant always cited for hetero
+ */
+function attachRingSuffix(baseName: string, spec: SuffixSpec, originalParent: string): string {
+  const { kind, locants } = spec;
+  const isCarbocycle = originalParent.startsWith("cyclo");
+  const isBenzene = originalParent === "benzene";
+  const isHetero = !isCarbocycle && !isBenzene;
+
+  // e-elision: drop trailing 'e' for vowel-initial suffixes
+  // -ol starts with 'o' (vowel) → elide
+  // -one starts with 'o' (vowel) → elide
+  // -amine starts with 'a' (vowel) → elide
+  const vowelSuffixes = new Set(["ol", "one", "amine", "al", "amide"]);
+  const dropE = vowelSuffixes.has(kind);
+  let base = baseName;
+  if (dropE && base.endsWith("e")) {
+    base = base.slice(0, -1);
+  }
+
+  // Locant citation:
+  // For carbocycles:
+  //   - -ol: omit locant 1 → "cyclohexanol" (unique for unsubstituted ring)
+  //   - -one: omit locant 1 → "cyclohexanone"
+  //   - -amine: always cite → "cyclohexan-1-amine" (IUPAC 2013 P-62.2.3)
+  // For heterocycles: always cite
+  // For benzene: treated as carbocycle for these purposes
+  const alwaysOmitLoc1 = !isHetero && (kind === "ol" || kind === "one");
+  const alwaysCite = isHetero;
+
+  const multi = locants.length;
+  const multPfx = multiplierPrefix(multi);
+
+  if (multi === 1) {
+    const loc = locants[0];
+    if (alwaysOmitLoc1 && loc === 1) {
+      return `${base}${multPfx}${kind}`;
+    }
+    if (!alwaysCite && !isHetero && loc === 1 && kind !== "amine") {
+      return `${base}${multPfx}${kind}`;
+    }
+    // Cite the locant
+    return `${base}-${loc}-${multPfx}${kind}`;
+  }
+
+  // Multiple locants (e.g. diol, dione)
+  const locStr = locants.join(",");
+  return `${base}-${locStr}-${multPfx}${kind}`;
+}
+
+/**
+ * Build the prefix segment for ring substituents.
+ * Single substituent on carbocycle/benzene → no locant.
+ * Multiple substituents, or any substituent on a heterocycle → with locants.
+ *
+ * @param alwaysLocants - force locant citation (heterocycles, retained aromatics)
+ */
+function prefixSegmentRing(
+  subs: { locant: number; name: string }[],
+  alwaysLocants = false,
+): string {
+  if (subs.length === 0) return "";
+
+  // Group by name
+  const groups = new Map<string, number[]>();
+  for (const s of subs) {
+    const arr = groups.get(s.name) ?? [];
+    arr.push(s.locant);
+    groups.set(s.name, arr);
+  }
+
+  const parts = [...groups.entries()].map(([name, locants]) => ({
+    name,
+    locants: locants.sort((a, b) => a - b),
+  }));
+
+  // Sort alphabetically
+  parts.sort((a, b) => {
+    const ka = alphaKeyRing(a.name);
+    const kb = alphaKeyRing(b.name);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  // Total substituent count: if >1, always cite locants
+  const totalSubs = subs.length;
+  const omitLocants = !alwaysLocants && totalSubs === 1;
+
+  return parts
+    .map((p) => {
+      const disp = isComplexName(p.name) ? `(${p.name})` : p.name;
+      const mult = multiplierPrefix(p.locants.length);
+      if (omitLocants) {
+        return `${mult}${disp}`;
+      }
+      return `${p.locants.join(",")}-${mult}${disp}`;
+    })
+    .join("-");
+}
+
+function alphaKeyRing(name: string): string {
+  return name.replace(/^\((.*)\)$/, "$1").replace(/^[\d,()\-\s]+/, "");
+}
+
+function isComplexName(name: string): boolean {
+  return /\d/.test(name);
+}
