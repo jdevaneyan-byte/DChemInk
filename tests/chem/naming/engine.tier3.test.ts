@@ -325,3 +325,94 @@ describe("Tier 3 – rejections (Tier 4 / out-of-scope)", () => {
     expect(name("CC(=O)O")).toBe("ethanoic acid");
   });
 });
+
+describe("Bug A – PCG suffix locant on substituted rings", () => {
+  // IUPAC rule: cite the -1- locant when there is at least one OTHER ring substituent.
+  // Omit the locant only when the PCG is the SOLE ring substituent.
+
+  // ── Carbocycle cases (locant cited) ──────────────────────────────────────────
+  it("OC1CCC(C)CC1 → 4-methylcyclohexan-1-ol (locant cited, other sub present)", () => {
+    expect(name("OC1CCC(C)CC1")).toBe("4-methylcyclohexan-1-ol");
+  });
+
+  it("CC1CCC(C(=O)O)CC1 → 4-methylcyclohexane-1-carboxylic acid (locant cited)", () => {
+    expect(name("CC1CCC(C(=O)O)CC1")).toBe("4-methylcyclohexane-1-carboxylic acid");
+  });
+
+  it("CC1CCC(=O)CC1 → 4-methylcyclohexan-1-one (locant cited)", () => {
+    expect(name("CC1CCC(=O)CC1")).toBe("4-methylcyclohexan-1-one");
+  });
+
+  // ── Carbocycle cases (locant omitted – sole substituent) ──────────────────────
+  it("OC1CCCCC1 → cyclohexanol (sole PCG, locant omitted)", () => {
+    expect(name("OC1CCCCC1")).toBe("cyclohexanol");
+  });
+
+  it("O=C1CCCCC1 → cyclohexanone (sole PCG, locant omitted)", () => {
+    expect(name("O=C1CCCCC1")).toBe("cyclohexanone");
+  });
+
+  it("OC(=O)C1CCCCC1 → cyclohexanecarboxylic acid (sole PCG, locant omitted)", () => {
+    expect(name("OC(=O)C1CCCCC1")).toBe("cyclohexanecarboxylic acid");
+  });
+
+  // ── Benzene retained names (phenol, etc.) – locants still cited for subs ───
+  it("Cc1ccc(O)cc1 → 4-methylphenol (benzene retained: phenol, sub locant cited)", () => {
+    expect(name("Cc1ccc(O)cc1")).toBe("4-methylphenol");
+  });
+
+  it("Cc1ccccc1O → 2-methylphenol", () => {
+    expect(name("Cc1ccccc1O")).toBe("2-methylphenol");
+  });
+});
+
+describe("Bug B – aromatic heterocycle ring carbonyls must not be mis-named", () => {
+  // CCn1ccccc1=O is 1-ethyl-2-pyridone (a tautomeric aromatic heterocyclic carbonyl).
+  // This is genuinely Tier-4. We must return status=unsupported, NOT emit any name
+  // mentioning piperidin/amide/etc.
+  it("CCn1ccccc1=O → unsupported (not piperidin* or *amide*)", () => {
+    const g = graphFromSmiles("CCn1ccccc1=O");
+    if (!g) return;
+    const result = nameMolecule(g);
+    expect(result.status).toBe("unsupported");
+    expect(result.name).toBeNull();
+    if (result.name) {
+      expect(result.name).not.toMatch(/piperidin/i);
+      expect(result.name).not.toMatch(/amide/i);
+    }
+    expect(result.reason ?? "").toMatch(/[Tt]ier[\s-]?4|unsupported|hetero|carbonyl|pyridinone/i);
+  });
+
+  // Oc1ccccn1 is the enol tautomer representation of 1H-pyridin-2-one.
+  // PubChem: 1H-pyridin-2-one (pyridinone, not pyridin-2-ol).
+  // Must NOT name it as pyridin-2-ol (wrong tautomer form).
+  it("Oc1ccccn1 → unsupported (tautomeric pyridinone, not pyridin-2-ol)", () => {
+    const g = graphFromSmiles("Oc1ccccn1");
+    if (!g) return;
+    const result = nameMolecule(g);
+    expect(result.status).toBe("unsupported");
+    expect(result.name).toBeNull();
+    if (result.name) {
+      expect(result.name).not.toMatch(/pyridin-2-ol/i);
+    }
+    expect(result.reason ?? "").toMatch(/[Tt]ier[\s-]?4|tautomer|pyridinone|unsupported/i);
+  });
+});
+
+describe("Audit – cycloalkene substituent locant citation", () => {
+  // PubChem: 1-methylcyclohexene (not methylcyclohexene) — substituent locant
+  // cited when the ring has double bonds.
+  it("CC1=CCCCC1 → 1-methylcyclohexene (locant cited, ring has double bond)", () => {
+    expect(name("CC1=CCCCC1")).toBe("1-methylcyclohexene");
+  });
+
+  // PubChem: cyclohexen-1-ol (locant cited for the OH suffix when double bond present)
+  it("OC1=CCCCC1 → cyclohexen-1-ol (suffix locant cited, double bond present)", () => {
+    expect(name("OC1=CCCCC1")).toBe("cyclohexen-1-ol");
+  });
+
+  // Unsubstituted cyclohexene: no locant change
+  it("C1=CCCCC1 → cyclohexene (no substituent, locant 1 omitted)", () => {
+    expect(name("C1=CCCCC1")).toBe("cyclohexene");
+  });
+});

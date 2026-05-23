@@ -428,6 +428,45 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     return true;
   });
 
+  // ── Cyclic carbonyl guard (Bug B / Tier-4 lactams & lactones) ────────────────
+  // A ring carbonyl is one where the group's carbon is in the ring AND at least
+  // one of the group's heteroatoms (N for amide, O for lactone/anhydride) is also
+  // in the ring. This produces lactams (pyridinones, pyrrolidinones) or lactones
+  // that are genuinely Tier-4 tautomeric/indicated-hydrogen heterocyclics.
+  // We must NOT mis-name these as piperidine-amide or similar.
+  for (const g of groups) {
+    if (ringSet.has(g.carbon) && g.atoms.some(a => ringSet.has(a))) {
+      // Cyclic amide (lactam): carbon in ring, N also in ring
+      // Cyclic acid/ketone variations: if heteroatom is ring O/N, also Tier 4
+      return {
+        name: null,
+        status: "unsupported",
+        reason: `ring carbonyl with heteroatom in ring (lactam/lactone/pyridinone) — Tier 4`,
+      };
+    }
+  }
+
+  // ── Aromatic N-heterocycle + ring OH = pyridinol/pyridinone tautomer → Tier 4 ─
+  // When an aromatic ring has N in the ring AND an alcohol group directly on a ring
+  // carbon, the dominant tautomer is the pyridinone (carbonyl form), not the enol
+  // (hydroxyl form). e.g. Oc1ccccn1 is 1H-pyridin-2-one, not pyridin-2-ol.
+  // We must NOT name this as pyridin-2-ol (which refers to a minor tautomer).
+  if (ring.aromatic && ring.heteroatoms.length > 0) {
+    const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+    const hasNInRing = ring.heteroatoms.some(idx => atomById.get(idx)?.element === "N");
+    if (hasNInRing) {
+      // Check if any alcohol group has its carbon in the ring
+      const alcoholOnRing = groups.some(g => g.kind === "alcohol" && ringSet.has(g.carbon));
+      if (alcoholOnRing) {
+        return {
+          name: null,
+          status: "unsupported",
+          reason: `aromatic N-heterocycle with ring OH is a tautomeric pyridinone — Tier 4`,
+        };
+      }
+    }
+  }
+
   // Check that every heteroatom is accounted for
   {
     const groupAtomSet = new Set<number>();
