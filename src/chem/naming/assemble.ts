@@ -367,7 +367,8 @@ export function assembleRingName(input: RingAssemblyInput): string {
     if (retained) {
       if (subs.length === 0) return retained;
       // e.g. 4-chlorobenzoic acid (substituted benzoic acid)
-      const pfx = prefixSegmentRing(subs);
+      // Always cite locants for retained names with added subs
+      const pfx = prefixSegmentRing(subs, true);
       return `${pfx}${retained}`;
     }
   }

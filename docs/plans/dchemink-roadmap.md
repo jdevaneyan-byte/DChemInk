@@ -35,7 +35,7 @@ what's deferred. It supersedes the older week-by-week breakdown.
 - ✅ **P1.2 Name → structure** — sidebar box + paste-name routing. Uses
   PubChem (online). ⚠️ **Offline/.exe builds need a preloaded local resolver
   (OPSIN + curated trivial-name table) — see `../OFFLINE-PACKAGING.md`.**
-- 🟡 **P1.3 Structure → name** — building our own algorithmic IUPAC engine
+- ✅ **P1.3 Structure → name (Tiers 1–3)** — building our own algorithmic IUPAC engine
   (option c), offline, original work re-derived from the public IUPAC
   recommendations.
   - **Tier 1 shipped:** acyclic hydrocarbons (chain selection, lowest-locant
@@ -52,9 +52,16 @@ what's deferred. It supersedes the older week-by-week breakdown.
     dichloride`). Two-part / functional-class names; seniority below acid,
     above amide. OPSIN round-trip audited (1000 molecules, 100% match).
     PubChem cross-checked: systematic PINs used (retained names noted).
-  - **⚠️ T3 owed (next milestone): rings** — benzene, cyclohexane,
-    heterocycles. Currently return `unsupported` with a ring reason. Must
-    be implemented before P1.3 can be marked fully done.
+  - **✅ Tier 3 shipped (monocyclic rings):** carbocycles (cyclopropane →
+    cyclooctane), benzene with mandatory retained PINs (phenol, aniline,
+    toluene, styrene, benzoic acid, benzaldehyde, benzonitrile, benzamide),
+    22 common heterocycles (pyridine, furan, thiophene, pyrrole, pyrimidine,
+    pyrazine, pyridazine, piperidine, pyrrolidine, morpholine, piperazine,
+    oxolane, oxane, thiolane, thiane, …), ring-as-substituent (phenyl prefix),
+    added-carbon suffixes (-carboxylic acid, -carbaldehyde, -carbonitrile,
+    -carboxamide). Pure-TS ring fingerprint; ring vs chain PCG parent selection.
+    OPSIN round-trip audited: 1001 molecules, 100% match, 0 mismatches.
+    PubChem cross-checked: systematic PINs used throughout.
   - Engine in `src/chem/naming/` (pure-TS rules engine ← `MolGraph` ← RDKit
     perception adapter), live "IUPAC" row in the Properties panel, transparent
     "not yet supported — <reason>" for out-of-tier molecules. Tier staircase
