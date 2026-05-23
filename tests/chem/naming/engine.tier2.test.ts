@@ -54,11 +54,6 @@ function status(smiles: string) {
   return nameMolecule(g).status;
 }
 
-function reason(smiles: string) {
-  const g = graphFromSmiles(smiles);
-  if (!g) return "";
-  return nameMolecule(g).reason ?? "";
-}
 
 describe("nameMolecule (Tier 2 end-to-end)", () => {
   // ── Carboxylic acids ─────────────────────────────────────────────────────────
@@ -161,9 +156,10 @@ describe("nameMolecule (Tier 2 end-to-end)", () => {
     // Engine routing added in Task 3. PubChem: "methyl acetate" (retained); we assert systematic.
     expect(name("CC(=O)OC")).toBe("methyl ethanoate");
   });
-  it("c1ccccc1 (ring) → unsupported mentioning ring", () => {
-    expect(status("c1ccccc1")).toBe("unsupported");
-    expect(reason("c1ccccc1")).toMatch(/ring/i);
+  it("c1ccccc1 (ring) → named 'benzene' in Tier 3", () => {
+    // Benzene is now named by Tier 3.
+    expect(status("c1ccccc1")).toBe("named");
+    expect(name("c1ccccc1")).toBe("benzene");
   });
   it("CC(=O)[O-] (charged) → unsupported", () => {
     expect(status("CC(=O)[O-]")).toBe("unsupported");

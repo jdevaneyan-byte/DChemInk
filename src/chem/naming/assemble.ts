@@ -296,7 +296,7 @@ export function anhydrideName(side1: string, side2: string): string {
 
 // ── Ring-parent assembly (Tier 3) ────────────────────────────────────────────
 
-export type AddedCarbonSuffix = "carboxylic acid" | "carbonitrile" | "carbaldehyde";
+export type AddedCarbonSuffix = "carboxylic acid" | "carbonitrile" | "carbaldehyde" | "carboxamide";
 
 export interface RingAssemblyInput {
   parent: string;           // "cyclohexane" | "benzene" | "pyridine" | etc.
@@ -319,10 +319,11 @@ const RETAINED_ALLOWS_SUBS = new Set(["phenol", "aniline", "benzoic acid", "benz
  * benzene + carbaldehyde    → benzaldehyde
  * benzene + carbonitrile    → benzonitrile
  */
-const BENZENE_ADDED_CARBON_RETAINED: Record<AddedCarbonSuffix, string> = {
+const BENZENE_ADDED_CARBON_RETAINED: Partial<Record<AddedCarbonSuffix, string>> = {
   "carboxylic acid": "benzoic acid",
   "carbaldehyde": "benzaldehyde",
   "carbonitrile": "benzonitrile",
+  "carboxamide": "benzamide",
 };
 
 /**
@@ -422,7 +423,7 @@ export function assembleRingName(input: RingAssemblyInput): string {
     // added-carbon replaces the suffix on carboxylic acid etc.
     // The added-carbon appends to the ring base (not to a suffix-modified name).
     // Re-derive the ring base without suffix:
-    let ringBase = buildUnsaturatedBase(parent, ringDoubleBondLocants);
+    const ringBase = buildUnsaturatedBase(parent, ringDoubleBondLocants);
     if (locantStr) {
       baseName = `${ringBase}${locantStr}${kind}`;
     } else {

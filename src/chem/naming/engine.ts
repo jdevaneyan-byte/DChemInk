@@ -2,14 +2,15 @@
 import type { MolGraph, NameResult } from "./graph";
 import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } from "./chain";
 import { nameSubstituent } from "./substituent";
-import { assembleName, acylName, acylHalideName, esterName, anhydrideName, type SuffixKind, type Sub } from "./assemble";
+import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, type SuffixKind, type Sub } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
+import { perceiveRing, nameRing, ringSubstituentName } from "./ring";
 
 /**
- * Elements supported by Tier 2 (C, H, O, N, F, Cl, Br, I).
+ * Elements supported by Tier 2+3 (C, H, O, N, F, Cl, Br, I, S for heterocycles).
  * Anything else → unsupported.
  */
-const SUPPORTED_ELEMENTS = new Set(["C", "H", "O", "N", "F", "Cl", "Br", "I"]);
+const SUPPORTED_ELEMENTS = new Set(["C", "H", "O", "N", "F", "Cl", "Br", "I", "S"]);
 
 /**
  * True if the heavy-atom (non-H) graph contains a cycle. For each connected
@@ -49,13 +50,16 @@ function hasHeavyAtomCycle(graph: MolGraph): boolean {
   return false;
 }
 
-/** Structural sanity gate (fragments, rings, charge) — checked BEFORE perception. */
+/** Structural sanity gate (fragments, charge) — checked BEFORE perception. */
 function structuralRejectReason(graph: MolGraph): string | null {
   if (graph.fragmentCount > 1) return "multiple fragments — arrives in a later tier";
-  if (graph.atoms.some((a) => a.ringIds.length > 0)) return "contains a ring — arrives in Tier 3";
-  if (hasHeavyAtomCycle(graph)) return "contains a ring — arrives in Tier 3";
   if (graph.atoms.some((a) => a.charge !== 0)) return "contains a charged atom — later tier";
   return null;
+}
+
+/** True if the molecule contains at least one ring atom. */
+function hasRing(graph: MolGraph): boolean {
+  return graph.atoms.some((a) => a.ringIds.length > 0) || hasHeavyAtomCycle(graph);
 }
 
 /** Map principal group kind to suffix kind (only for suffix-path groups). */
@@ -351,19 +355,757 @@ function describeOAlkylChain(
   return { alkylName: alkyl, alkylAtoms };
 }
 
+// ── Helpers for ring path ─────────────────────────────────────────────────────
+
+/** Get all non-ring neighbors of a ring atom (substituent attachment points). */
+function ringSubstituents(
+  graph: MolGraph,
+  ringSet: Set<number>,
+): Map<number, number[]> {
+  // Returns map: ring atom index → [non-ring heavy atom neighbors]
+  const result = new Map<number, number[]>();
+  for (const idx of ringSet) {
+    const nonRingNbrs: number[] = [];
+    for (const b of graph.bonds) {
+      if (b.from === idx) {
+        if (!ringSet.has(b.to) && graph.atoms.find(a => a.index === b.to)?.element !== "H") {
+          nonRingNbrs.push(b.to);
+        }
+      } else if (b.to === idx) {
+        if (!ringSet.has(b.from) && graph.atoms.find(a => a.index === b.from)?.element !== "H") {
+          nonRingNbrs.push(b.from);
+        }
+      }
+    }
+    if (nonRingNbrs.length > 0) result.set(idx, nonRingNbrs);
+  }
+  return result;
+}
+
+/** True if atom `idx` is directly bonded to a ring atom in `ringSet` (the attached exocyclic carbon). */
+function isDirectlyAttachedToRing(graph: MolGraph, idx: number, ringSet: Set<number>): boolean {
+  return graph.bonds.some(b =>
+    (b.from === idx && ringSet.has(b.to)) || (b.to === idx && ringSet.has(b.from))
+  );
+}
+
+/**
+ * Name a single-ring molecule. Called by nameMolecule when hasRing() is true.
+ */
+function nameMoleculeRing(graph: MolGraph): NameResult {
+  const heavy = graph.atoms.filter((a) => a.element !== "H");
+
+  // Perceive the ring
+  const ring = perceiveRing(graph);
+  if (!ring) {
+    // ≥2 rings (naphthalene, decalin, etc.) → Tier 4
+    return { name: null, status: "unsupported", reason: "fused/bridged/multiple rings — Tier 4" };
+  }
+
+  const ringSet = new Set(ring.atoms);
+
+  // Perceive functional groups (same as acyclic path)
+  const perception = perceiveGroups(graph);
+  if (perception.unsupported) {
+    return { name: null, status: "unsupported", reason: perception.unsupported };
+  }
+
+  // Filter out any groups whose heteroatom atoms are part of the ring itself.
+  // Ring heteroatoms (N in piperidine, O in furan, etc.) are named as part of
+  // the ring name — they must NOT be treated as functional group substituents.
+  // A group is ring-internal if ALL its 'atoms' (heteroatom indices) are in the ring.
+  const allGroups = perception.groups.filter(g => {
+    // If all group heteroatoms are ring atoms, skip this group
+    const allInRing = g.atoms.every(a => ringSet.has(a));
+    return !allInRing;
+  });
+
+  // Also filter: if the group's carbon is a ring atom AND the group's heteroatom
+  // is a ring atom (e.g. ring O classified as ether) → skip
+  const groups = allGroups.filter(g => {
+    // Ether: O between two ring carbons → ring itself; skip
+    if (g.kind === "ether" && ringSet.has(g.carbon) && ringSet.has(g.atoms[0])) return false;
+    return true;
+  });
+
+  // Check that every heteroatom is accounted for
+  {
+    const groupAtomSet = new Set<number>();
+    for (const g of groups) for (const a of g.atoms) groupAtomSet.add(a);
+    for (const a of graph.atoms) {
+      if (a.element === "C" || a.element === "H") continue;
+      // Ring heteroatoms (N, O, S in the ring) are accounted for as ring members
+      if (ringSet.has(a.index)) continue;
+      if (!groupAtomSet.has(a.index)) {
+        const eName = { O: "oxygen", N: "nitrogen", S: "sulfur", F: "fluorine", Cl: "chlorine", Br: "bromine", I: "iodine" }[a.element] ?? a.element;
+        return { name: null, status: "unsupported", reason: `contains unclassified ${eName} — functional group not recognized in this tier` };
+      }
+    }
+  }
+
+  // Determine PCG
+  const pcgKind = principalKind(groups);
+
+  // ── Determine parent: ring or chain ──────────────────────────────────────────
+  // Rule:
+  //  1. No PCG → ring is parent (e.g. alkylcyclohexane)
+  //  2. PCG on a ring atom → ring is parent (cyclohexanol, cyclohexanone)
+  //  3. PCG on a directly-attached exocyclic carbon → ring parent + added-carbon suffix
+  //     (cyclohexanecarboxylic acid, benzoic acid)
+  //  4. PCG on a chain not at the ring → chain is parent, ring becomes substituent
+  //     (2-phenylacetic acid)
+
+  const pcgGroups = pcgKind ? groups.filter(g => g.kind === pcgKind) : [];
+
+  // Check where each PCG sits relative to the ring
+  let pcgOnRingAtom = false;
+  let pcgOnExocyclicC = false; // group carbon is exocyclic, directly attached to ring
+  let pcgOnChain = false;
+
+  for (const g of pcgGroups) {
+    if (ringSet.has(g.carbon)) {
+      pcgOnRingAtom = true;
+    } else if (isDirectlyAttachedToRing(graph, g.carbon, ringSet)) {
+      // PCG carbon is exocyclic and directly bonded to a ring atom → added-carbon form
+      pcgOnExocyclicC = true;
+    } else {
+      pcgOnChain = true;
+    }
+  }
+
+  // If PCG only on chain (not ring-adjacent) → chain parent
+  if (pcgKind && pcgOnChain && !pcgOnRingAtom && !pcgOnExocyclicC) {
+    return nameMoleculeRingAsSubstituent(graph, ring, groups, pcgKind, pcgGroups);
+  }
+
+  // For two-part naming (acylHalide/ester/anhydride) on a ring — complex, defer
+  if (pcgKind && (pcgKind === "acylHalide" || pcgKind === "ester" || pcgKind === "anhydride")) {
+    return { name: null, status: "unsupported", reason: "acyl halide/ester/anhydride on ring — not yet supported in this tier" };
+  }
+
+  // ── Ring is parent ──────────────────────────────────────────────────────────
+
+  // Identify ring substituents (non-ring non-H atoms attached to ring atoms)
+  const subMap = ringSubstituents(graph, ringSet);
+
+  // Build the CarbonGraph for the exocyclic (non-ring) carbons only
+  // (substituent naming uses the C-graph of the chains hanging off the ring)
+  const exoCarbonGraph = buildCarbonGraph(graph);
+  // Remove ring carbons from the carbon graph so substituent naming doesn't
+  // traverse through the ring
+  for (const idx of ringSet) {
+    exoCarbonGraph.carbons = exoCarbonGraph.carbons.filter(c => c !== idx);
+    exoCarbonGraph.adj.delete(idx);
+    for (const [, list] of exoCarbonGraph.adj) {
+      const i = list.indexOf(idx);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+
+  // Classify each ring-attached substituent:
+  //  - FG group atoms hanging off the ring → suffix or prefix
+  //  - alkyl/halogen chains → prefix substituents
+  //  - PCG exocyclic carbon → added-carbon suffix
+  const groupAtomSet = new Set<number>();
+  for (const g of groups) for (const a of g.atoms) groupAtomSet.add(a);
+
+  // Set of "group carbon" indices that are the exocyclic PCG carbon
+  const exocyclicPcgCarbons = new Set<number>();
+  if (pcgOnExocyclicC) {
+    for (const g of pcgGroups) {
+      if (!ringSet.has(g.carbon) && isDirectlyAttachedToRing(graph, g.carbon, ringSet)) {
+        exocyclicPcgCarbons.add(g.carbon);
+      }
+    }
+  }
+
+  // For each exocyclic PCG carbon, find the ring atom it's attached to
+  const exocyclicPcgToRingAtom = new Map<number, number>();
+  for (const excC of exocyclicPcgCarbons) {
+    for (const b of graph.bonds) {
+      if (b.from === excC && ringSet.has(b.to)) { exocyclicPcgToRingAtom.set(excC, b.to); break; }
+      if (b.to === excC && ringSet.has(b.from)) { exocyclicPcgToRingAtom.set(excC, b.from); break; }
+    }
+  }
+
+  // Collect ring atoms that carry substituents (for locant optimization)
+  // A ring atom has a substituent if it has non-ring non-H neighbors not accounted for by groups
+  // that have their carbon IN the ring, or by exocyclic PCG carbons.
+  const subRingAtoms = new Set<number>(); // ring atoms with any substituent (for numbering)
+  const pcgRingAtoms = new Set<number>(); // ring atoms that are the PCG or bear exo-PCG carbon
+
+  // For PCG on ring atom directly:
+  if (pcgOnRingAtom) {
+    for (const g of pcgGroups) {
+      if (ringSet.has(g.carbon)) pcgRingAtoms.add(g.carbon);
+    }
+  }
+  // For PCG on exocyclic carbon:
+  if (pcgOnExocyclicC) {
+    for (const [excC, ringAtom] of exocyclicPcgToRingAtom) {
+      void excC;
+      pcgRingAtoms.add(ringAtom);
+    }
+  }
+
+  // Any ring atom with a substituent (prefix sub or PCG)
+  for (const [ringAtom] of subMap) {
+    subRingAtoms.add(ringAtom);
+  }
+
+  // Get ring naming with locant optimization
+  const unsatBonds: [number, number][] = [];
+  if (!ring.aromatic) {
+    // Find double bonds in the ring
+    for (const b of graph.bonds) {
+      if (b.order === 2 && ringSet.has(b.from) && ringSet.has(b.to)) {
+        unsatBonds.push([b.from, b.to]);
+      }
+    }
+  }
+
+  const ringNaming = nameRing(graph, ring, {
+    pcgAtoms: pcgRingAtoms.size > 0 ? pcgRingAtoms : undefined,
+    unsatBonds,
+    subAtoms: subRingAtoms.size > 0 ? subRingAtoms : undefined,
+  });
+
+  if (!ringNaming) {
+    return { name: null, status: "unsupported", reason: "ring not yet supported — Tier 4" };
+  }
+
+  const { locantOf } = ringNaming;
+
+  // ── Special retained aromatics: styrene ──────────────────────────────────────
+  // Styrene = benzene + exactly one vinyl (CH=CH2) substituent, no other groups.
+  if (ringNaming.kind === "benzene" && !pcgKind && groups.length === 0) {
+    const styreneName = detectStyrene(graph, ringSet);
+    if (styreneName) return { name: styreneName, status: "named" };
+  }
+
+  // ── Build substituent list ──────────────────────────────────────────────────
+  const ringNameSubs: { locant: number; name: string }[] = [];
+
+  // Non-PCG groups attached to ring atoms (prefix form)
+  const nonPcgGroups = pcgKind
+    ? groups.filter(g => SENIORITY[g.kind] < SENIORITY[pcgKind] || SENIORITY[g.kind] === 0)
+    : groups;
+
+  // Track which group atoms are accounted for
+  const accountedAtoms = new Set<number>(ring.atoms);
+
+  // Process non-PCG groups attached to ring atoms
+  for (const g of nonPcgGroups) {
+    if (ringSet.has(g.carbon)) {
+      // Group directly on ring atom
+      const loc = locantOf.get(g.carbon);
+      if (loc !== undefined) {
+        ringNameSubs.push({ locant: loc, name: prefixForm(g) });
+        for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    } else if (isDirectlyAttachedToRing(graph, g.carbon, ringSet)) {
+      // Group on exocyclic carbon attached to ring — treat as substituent
+      // The ring atom bearing this exocyclic group
+      const ringAtom = [...ringSet].find(idx => graph.bonds.some(b =>
+        (b.from === idx && b.to === g.carbon) || (b.to === idx && b.from === g.carbon)
+      ));
+      if (ringAtom !== undefined) {
+        const loc = locantOf.get(ringAtom);
+        if (loc !== undefined) {
+          // This exocyclic group carbon is NOT the PCG carbon
+          // We need to express it as a prefix including its own carbon
+          // e.g. carboxy, cyano, carbamoyl
+          const CARBON_PREFIX = new Set<GroupKind>(["nitrile", "acid", "amide"]);
+          if (CARBON_PREFIX.has(g.kind)) {
+            ringNameSubs.push({ locant: loc, name: prefixForm(g) });
+            accountedAtoms.add(g.carbon);
+            for (const a of g.atoms) accountedAtoms.add(a);
+          }
+        }
+      }
+    }
+  }
+
+  // Process exocyclic PCG carbon as added-carbon suffix (for ring-parent path)
+  let addedCarbon: { kind: import("./assemble").AddedCarbonSuffix; locants: number[] } | undefined;
+  if (pcgOnExocyclicC && pcgGroups.length > 0) {
+    const g = pcgGroups[0]; // single exocyclic PCG
+    const ringAtom = exocyclicPcgToRingAtom.get(g.carbon);
+    if (ringAtom !== undefined) {
+      const loc = locantOf.get(ringAtom);
+      if (loc !== undefined) {
+        const addedKind = pcgKindToAddedCarbon(pcgKind!);
+        if (!addedKind) {
+          return { name: null, status: "unsupported", reason: `${pcgKind} not expressible as added-carbon on ring` };
+        }
+        addedCarbon = { kind: addedKind, locants: [loc] };
+        accountedAtoms.add(g.carbon);
+        for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+  }
+
+  // PCG directly on ring atom → suffix
+  let suffix: import("./assemble").SuffixSpec | undefined;
+  if (pcgOnRingAtom && pcgGroups.length > 0) {
+    const pcgLocs = pcgGroups
+      .filter(g => ringSet.has(g.carbon))
+      .map(g => locantOf.get(g.carbon)!)
+      .filter(l => l !== undefined)
+      .sort((a, b) => a - b);
+    if (pcgLocs.length > 0) {
+      suffix = { kind: toSuffixKindRing(pcgKind!), locants: pcgLocs };
+      for (const g of pcgGroups) {
+        if (ringSet.has(g.carbon)) {
+          for (const a of g.atoms) accountedAtoms.add(a);
+        }
+      }
+    }
+  }
+
+  // Process alkyl/halogen substituents on ring atoms
+  for (const [ringAtom, exoNbrs] of subMap) {
+    for (const exoNbr of exoNbrs) {
+      // Skip if already accounted for by a group
+      if (groupAtomSet.has(exoNbr)) continue;
+      if (exocyclicPcgCarbons.has(exoNbr)) continue;
+      // Skip if this is a non-PCG group carbon (e.g. a non-PCG acid/nitrile/amide)
+      if (groups.some(g => g.carbon === exoNbr)) continue;
+
+      const loc = locantOf.get(ringAtom);
+      if (loc === undefined) continue;
+
+      // Name the substituent (alkyl chain or similar)
+      const atom = graph.atoms.find(a => a.index === exoNbr);
+      if (!atom) continue;
+
+      // Halogens: direct prefix
+      if (["F", "Cl", "Br", "I"].includes(atom.element)) {
+        const halPfx: Record<string, string> = { F: "fluoro", Cl: "chloro", Br: "bromo", I: "iodo" };
+        ringNameSubs.push({ locant: loc, name: halPfx[atom.element] });
+        accountedAtoms.add(exoNbr);
+        continue;
+      }
+
+      // Carbon: name as alkyl substituent using the exo carbon graph
+      if (atom.element === "C") {
+        const subName = nameSubstituent(exoCarbonGraph, exoNbr, ringAtom);
+        ringNameSubs.push({ locant: loc, name: subName });
+        // Account for all carbons in this substituent
+        const subAtoms = collectSubtreeAtoms(exoCarbonGraph, exoNbr, ringAtom);
+        for (const a of subAtoms) accountedAtoms.add(a);
+        continue;
+      }
+
+      // Other (unsupported substituent type on ring)
+      return { name: null, status: "unsupported", reason: "contains a substituent not yet supported on rings in this tier" };
+    }
+  }
+
+  // Also account for PCG group atoms on exocyclic non-direct cases
+  if (pcgKind) {
+    for (const g of pcgGroups) {
+      if (!ringSet.has(g.carbon) && !exocyclicPcgCarbons.has(g.carbon)) {
+        // PCG on a more distal chain — was already routed to chain-parent path
+        // This shouldn't happen here, but let's be safe
+      }
+    }
+  }
+
+  // Completeness guard: every heavy atom must be accounted for
+  if (heavy.some(a => !accountedAtoms.has(a.index))) {
+    return { name: null, status: "unsupported", reason: "contains a substituent or arrangement not yet supported in this tier" };
+  }
+
+  // Multiple-bond guard for ring path:
+  // Each double/triple bond must be:
+  //  (a) a ring bond (accounted by ring aromaticity / cycloalkene detection)
+  //  (b) a group bond (C=O carbonyl, C≡N nitrile)
+  //  (c) a chain ene/yne on an exocyclic substituent (for styrene: C=C exo)
+  for (const b of graph.bonds) {
+    if (b.order < 2) continue;
+    // Ring bonds are OK (ring handles them)
+    if (ringSet.has(b.from) && ringSet.has(b.to)) continue;
+    // Group bonds (carbonyl, nitrile)
+    if (groups.some(g => g.atoms.includes(b.from) || g.atoms.includes(b.to))) continue;
+    // Exocyclic group bonds for exocyclic PCG (C=O for aldehyde, etc.)
+    if (pcgGroups.some(g => g.carbon === b.from || g.carbon === b.to)) continue;
+    // Exo double bond from ring to substituent (e.g. styrene C=C)
+    // Allow if both atoms are in accountedAtoms
+    if (accountedAtoms.has(b.from) && accountedAtoms.has(b.to)) continue;
+    return { name: null, status: "unsupported", reason: "contains a multiple bond not expressible in this tier" };
+  }
+
+  // ── Retained aromatic names ─────────────────────────────────────────────────
+  let retainedAromatic: string | undefined;
+  if (ringNaming.kind === "benzene") {
+    retainedAromatic = detectRetainedAromatic(ringNaming.parent, pcgKind, pcgGroups, groups, ringNameSubs, addedCarbon, ringSet);
+  }
+
+  // ── Ring double bond locants (for cycloalkenes) ───────────────────────────
+  let ringDoubleBondLocants: number[] | undefined;
+  if (!ring.aromatic && unsatBonds.length > 0) {
+    ringDoubleBondLocants = unsatBonds.map(([a, b]) => {
+      const la = locantOf.get(a)!;
+      const lb = locantOf.get(b)!;
+      return Math.min(la, lb);
+    }).sort((a, b) => a - b);
+  }
+
+  // Assemble the name
+  const finalName = assembleRingName({
+    parent: ringNaming.parent,
+    subs: ringNameSubs,
+    ringDoubleBondLocants,
+    suffix,
+    addedCarbon,
+    retainedAromatic,
+  });
+
+  return { name: finalName, status: "named" };
+}
+
+/** Map PCG kind to the added-carbon suffix kind for exocyclic groups. */
+function pcgKindToAddedCarbon(pcgKind: GroupKind): import("./assemble").AddedCarbonSuffix | null {
+  if (pcgKind === "acid") return "carboxylic acid";
+  if (pcgKind === "nitrile") return "carbonitrile";
+  if (pcgKind === "aldehyde") return "carbaldehyde";
+  if (pcgKind === "amide") return "carboxamide" as import("./assemble").AddedCarbonSuffix;
+  return null;
+}
+
+/** Suffix kind for on-ring PCG groups. */
+function toSuffixKindRing(k: GroupKind): SuffixKind {
+  const map: Partial<Record<GroupKind, SuffixKind>> = {
+    ketone: "one",
+    alcohol: "ol",
+    amine: "amine",
+    amide: "amide",
+    nitrile: "nitrile",
+    aldehyde: "al",
+    acid: "oic acid",
+  };
+  return map[k]!;
+}
+
+/**
+ * Detect a retained aromatic name for benzene + defining group.
+ * Returns the retained name (e.g. "phenol", "aniline") or undefined.
+ *
+ * Retained names that apply:
+ *  phenol    = benzene + alcohol (OH on ring)
+ *  aniline   = benzene + amine (NH2 on ring)
+ *  toluene   = benzene + single methyl substituent (no FG)
+ *  styrene   = benzene + single vinyl (ethenyl) substituent
+ *  benzamide = benzene + amide on ring
+ *  benzoic acid, benzaldehyde, benzonitrile = handled by benzene + added-carbon
+ */
+function detectRetainedAromatic(
+  _parentName: string,
+  pcgKind: GroupKind | null,
+  pcgGroups: Group[],
+  allGroups: Group[],
+  subs: { locant: number; name: string }[],
+  addedCarbon: { kind: import("./assemble").AddedCarbonSuffix; locants: number[] } | undefined,
+  ringSet: Set<number>,
+): string | undefined {
+  // If there's an added-carbon suffix, benzene → benzoic acid / benzaldehyde / benzonitrile
+  // (these are already handled in assembleRingName; return undefined here to let assemble handle it)
+  if (addedCarbon) return undefined;
+
+  // Suffix-path retained names: phenol (alcohol on ring), aniline (amine on ring)
+  if (pcgKind === "alcohol" && pcgGroups.length === 1 && ringSet.has(pcgGroups[0].carbon)) {
+    return "phenol";
+  }
+  if (pcgKind === "amine" && pcgGroups.length === 1 && ringSet.has(pcgGroups[0].carbon)) {
+    return "aniline";
+  }
+  if (pcgKind === "amide" && pcgGroups.length === 1 && ringSet.has(pcgGroups[0].carbon)) {
+    return "benzamide";
+  }
+
+  // Toluene: no PCG, exactly one substituent which is "methyl"
+  if (!pcgKind && allGroups.length === 0 && subs.length === 1 && subs[0].name === "methyl") {
+    return "toluene";
+  }
+
+  // Styrene: no PCG, exactly one substituent which is "ethenyl" (vinyl, CH=CH2)
+  if (!pcgKind && allGroups.length === 0 && subs.length === 1 && subs[0].name === "ethenyl") {
+    return "styrene";
+  }
+
+  return undefined;
+}
+
+/**
+ * If the ring is benzene and has exactly one exocyclic vinyl group (CH=CH2) and
+ * no other substituents or groups, return "styrene". Otherwise return null.
+ */
+function detectStyrene(graph: MolGraph, ringSet: Set<number>): string | null {
+  const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+
+  // Collect exocyclic non-H atoms attached to ring atoms
+  const exoAtoms: { ringAtom: number; exo: number }[] = [];
+  for (const b of graph.bonds) {
+    if (ringSet.has(b.from) && !ringSet.has(b.to)) {
+      const exoAtom = atomById.get(b.to);
+      if (exoAtom && exoAtom.element !== "H") exoAtoms.push({ ringAtom: b.from, exo: b.to });
+    } else if (ringSet.has(b.to) && !ringSet.has(b.from)) {
+      const exoAtom = atomById.get(b.from);
+      if (exoAtom && exoAtom.element !== "H") exoAtoms.push({ ringAtom: b.to, exo: b.from });
+    }
+  }
+
+  if (exoAtoms.length !== 1) return null;
+  const { exo: vinylC1 } = exoAtoms[0];
+
+  // vinylC1 must be carbon
+  const c1 = atomById.get(vinylC1);
+  if (!c1 || c1.element !== "C") return null;
+
+  // vinylC1 must have a double bond to vinylC2 (=CH2)
+  const vinylBond = graph.bonds.find(b =>
+    b.order === 2 && ((b.from === vinylC1) || (b.to === vinylC1))
+  );
+  if (!vinylBond) return null;
+
+  const vinylC2Idx = vinylBond.from === vinylC1 ? vinylBond.to : vinylBond.from;
+  const c2 = atomById.get(vinylC2Idx);
+  if (!c2 || c2.element !== "C") return null;
+
+  // vinylC2 must be terminal (only bonds to vinylC1 and H's), i.e. =CH2
+  const c2Bonds = graph.bonds.filter(b => (b.from === vinylC2Idx || b.to === vinylC2Idx));
+  const c2NonHNbrs = c2Bonds
+    .map(b => b.from === vinylC2Idx ? b.to : b.from)
+    .filter(idx => (atomById.get(idx)?.element ?? "H") !== "H");
+  if (c2NonHNbrs.length !== 1 || c2NonHNbrs[0] !== vinylC1) return null; // not terminal
+
+  // vinylC1 must have no other non-ring, non-H, non-vinylC2 neighbors
+  const c1Bonds = graph.bonds.filter(b => (b.from === vinylC1 || b.to === vinylC1));
+  const c1NonHNbrs = c1Bonds
+    .map(b => b.from === vinylC1 ? b.to : b.from)
+    .filter(idx => (atomById.get(idx)?.element ?? "H") !== "H");
+  // c1NonHNbrs should be: exactly 1 ring atom + vinylC2
+  const c1Expected = new Set([...ringSet, vinylC2Idx]);
+  if (!c1NonHNbrs.every(idx => c1Expected.has(idx))) return null;
+
+  return "styrene";
+}
+
+/** Collect all atoms in the subtree from start, blocked by from, using exo carbon graph. */
+function collectSubtreeAtoms(cg: CarbonGraph, start: number, from: number): number[] {
+  const seen = new Set<number>([from]);
+  const stack = [start];
+  const out: number[] = [];
+  while (stack.length) {
+    const u = stack.pop()!;
+    if (seen.has(u)) continue;
+    seen.add(u);
+    out.push(u);
+    for (const v of cg.adj.get(u) ?? []) {
+      if (!seen.has(v)) stack.push(v);
+    }
+  }
+  return out;
+}
+
+/**
+ * Handle the case where the ring becomes a substituent on a chain parent.
+ * The PCG is on a chain (not the ring), and the ring hangs off the chain.
+ */
+function nameMoleculeRingAsSubstituent(
+  graph: MolGraph,
+  ring: import("./ring").RingInfo,
+  groups: Group[],
+  pcgKind: GroupKind,
+  pcgGroups: Group[],
+): NameResult {
+  const heavy = graph.atoms.filter((a) => a.element !== "H");
+  const ringSet = new Set(ring.atoms);
+
+  // The ring naming (to get the substituent name: phenyl, cyclohexyl, pyridin-2-yl, etc.)
+  // For ring-as-substituent, we need to find the attachment locant first
+
+  // Build the chain (non-ring) carbon graph
+  const cg = buildCarbonGraph(graph);
+  // Remove ring carbons from the CarbonGraph
+  for (const idx of ringSet) {
+    cg.carbons = cg.carbons.filter(c => c !== idx);
+    cg.adj.delete(idx);
+    for (const [, list] of cg.adj) {
+      const i = list.indexOf(idx);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+
+  // Find the chain carbon attached to the ring
+  // (the ring-to-chain attachment bond)
+  let ringAttachAtom: number | null = null;
+  let chainAttachAtom: number | null = null;
+  for (const b of graph.bonds) {
+    if (ringSet.has(b.from) && !ringSet.has(b.to) && graph.atoms.find(a => a.index === b.to)?.element === "C") {
+      ringAttachAtom = b.from;
+      chainAttachAtom = b.to;
+      break;
+    }
+    if (ringSet.has(b.to) && !ringSet.has(b.from) && graph.atoms.find(a => a.index === b.from)?.element === "C") {
+      ringAttachAtom = b.to;
+      chainAttachAtom = b.from;
+      break;
+    }
+  }
+
+  if (ringAttachAtom === null || chainAttachAtom === null) {
+    return { name: null, status: "unsupported", reason: "ring not attached to chain via carbon — not supported" };
+  }
+
+  // Get the ring naming to get locant for the attachment
+  const ringNaming = nameRing(graph, ring, {});
+  if (!ringNaming) {
+    return { name: null, status: "unsupported", reason: "ring not yet supported — Tier 4" };
+  }
+
+  const attachLocant = ringNaming.locantOf.get(ringAttachAtom) ?? 1;
+  const ringSub = ringSubstituentName(ringNaming.parent, ringNaming.kind, attachLocant);
+
+  // Verify only ONE ring-to-chain attachment (spiro/bridged → decline)
+  const ringChainBonds = graph.bonds.filter(b =>
+    (ringSet.has(b.from) && !ringSet.has(b.to)) || (ringSet.has(b.to) && !ringSet.has(b.from))
+  ).filter(b => graph.atoms.find(a => a.index === (ringSet.has(b.from) ? b.to : b.from))?.element !== "H");
+
+  if (ringChainBonds.length > 1) {
+    // Multiple ring-chain bonds (e.g. spiro) → unsupported
+    return { name: null, status: "unsupported", reason: "multiple ring-chain attachments — not supported in this tier" };
+  }
+
+  // Now name the chain using existing machinery (same as acyclic path)
+  // The chain CG no longer contains ring carbons
+  // We treat the ring substituent just like an alkyl branch attached at chainAttachAtom
+
+  // Re-use the existing chain naming logic:
+  const CARBON_PREFIX = new Set<GroupKind>(["nitrile", "acid", "amide"]);
+  const excludedCarbons = new Set<number>();
+  if (pcgKind) {
+    for (const g of groups) {
+      if (g.kind !== pcgKind && CARBON_PREFIX.has(g.kind)) excludedCarbons.add(g.carbon);
+    }
+  }
+  if (excludedCarbons.size > 0) {
+    cg.carbons = cg.carbons.filter(c => !excludedCarbons.has(c));
+    for (const c of excludedCarbons) cg.adj.delete(c);
+    for (const [, list] of cg.adj) {
+      for (let i = list.length - 1; i >= 0; i--) if (excludedCarbons.has(list[i])) list.splice(i, 1);
+    }
+  }
+
+  const pcgCarbons = pcgGroups.map(g => g.carbon).filter(c => !ringSet.has(c));
+  const chain = selectPrincipalChain(cg, { pcgCarbons }).atoms;
+  const inChain = new Set(chain);
+
+  // ene/yne locants on chain
+  const doubles: number[] = [];
+  const triples: number[] = [];
+  for (let i = 0; i < chain.length - 1; i++) {
+    const o = ccOrder(cg, chain[i], chain[i + 1]);
+    if (o === 2) doubles.push(i + 1);
+    if (o === 3) triples.push(i + 1);
+  }
+
+  const groupAtomSet = new Set<number>();
+  for (const g of groups) for (const a of g.atoms) groupAtomSet.add(a);
+
+  const subs: { locant: number; name: string }[] = [];
+  const nonPcgGroups = pcgKind
+    ? groups.filter(g => SENIORITY[g.kind] < SENIORITY[pcgKind] || SENIORITY[g.kind] === 0)
+    : groups;
+
+  for (const g of nonPcgGroups) {
+    const anchor = CARBON_PREFIX.has(g.kind)
+      ? neighborsOf(graph, g.carbon).find(n => inChain.has(n))
+      : (inChain.has(g.carbon) ? g.carbon : undefined);
+    if (anchor === undefined) continue;
+    subs.push({ locant: chain.indexOf(anchor) + 1, name: prefixForm(g) });
+  }
+
+  // Alkyl branch substituents
+  for (let i = 0; i < chain.length; i++) {
+    for (const nb of cg.adj.get(chain[i]) ?? []) {
+      if (!inChain.has(nb) && !groupAtomSet.has(nb)) {
+        subs.push({ locant: i + 1, name: nameSubstituent(cg, nb, chain[i]) });
+      }
+    }
+  }
+
+  // Add ring as substituent at chainAttachAtom's chain position
+  const chainPos = chain.indexOf(chainAttachAtom!);
+  if (chainPos >= 0) {
+    subs.push({ locant: chainPos + 1, name: ringSub });
+  }
+
+  // Completeness guard: chain atoms + group atoms + ring atoms + ring substituent atoms
+  const accounted = new Set<number>([...chain, ...ring.atoms]);
+  for (const g of groups) {
+    if (inChain.has(g.carbon)) for (const a of g.atoms) accounted.add(a);
+    else if (excludedCarbons.has(g.carbon) && neighborsOf(graph, g.carbon).some(n => inChain.has(n))) {
+      accounted.add(g.carbon);
+      for (const a of g.atoms) accounted.add(a);
+    }
+  }
+  for (const c of chain) {
+    for (const nb of cg.adj.get(c) ?? []) {
+      if (!inChain.has(nb) && !groupAtomSet.has(nb)) {
+        for (const a of branchCarbons(cg, nb, inChain)) accounted.add(a);
+      }
+    }
+  }
+  if (heavy.some(a => !accounted.has(a.index))) {
+    return { name: null, status: "unsupported", reason: "contains a substituent or arrangement not yet supported in this tier" };
+  }
+
+  // Multiple-bond guard
+  for (const b of graph.bonds) {
+    if (b.order < 2) continue;
+    // Ring bonds are fine
+    if (ringSet.has(b.from) && ringSet.has(b.to)) continue;
+    const ia = chain.indexOf(b.from), ib = chain.indexOf(b.to);
+    if (ia >= 0 && ib >= 0 && Math.abs(ia - ib) === 1) continue; // on-chain
+    if (groups.some(g => g.atoms.includes(b.from) || g.atoms.includes(b.to))) continue;
+    if (groups.some(g => g.atoms.includes(b.from) || g.atoms.includes(b.to))) continue;
+    return { name: null, status: "unsupported", reason: "contains a multiple bond not on the main chain — not yet supported" };
+  }
+
+  // Suffix
+  let suffix: import("./assemble").SuffixSpec | undefined;
+  if (pcgKind && pcgGroups.length > 0) {
+    const suffixLocants = pcgGroups
+      .map(g => chain.indexOf(g.carbon) + 1)
+      .filter(l => l > 0)
+      .sort((a, b) => a - b);
+    suffix = { kind: toSuffixKind(pcgKind), locants: suffixLocants };
+  }
+
+  const nameTxt = assembleName({ chainLen: chain.length, doubles, triples, subs, suffix });
+  return { name: nameTxt, status: "named", parentChain: chain };
+}
+
 export function nameMolecule(graph: MolGraph): NameResult {
   const heavy = graph.atoms.filter((a) => a.element !== "H");
   if (heavy.length === 0) return { name: null, status: "empty" };
 
-  // Structural checks first (rings, multiple fragments, charged atoms)
+  // Structural checks (multiple fragments, charged atoms)
   const structErr = structuralRejectReason(graph);
   if (structErr) return { name: null, status: "unsupported", reason: structErr };
 
-  // Element gate: only C/H/O/N/F/Cl/Br/I supported
+  // Element gate: only C/H/O/N/F/Cl/Br/I supported (also S for heterocycles)
   for (const a of graph.atoms) {
     if (!SUPPORTED_ELEMENTS.has(a.element)) {
       return { name: null, status: "unsupported", reason: `contains ${a.element} — later tier` };
     }
+  }
+
+  // ── Route ring molecules to Tier-3 ring path ──────────────────────────────
+  if (hasRing(graph)) {
+    return nameMoleculeRing(graph);
   }
 
   // Functional-group perception

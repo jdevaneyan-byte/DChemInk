@@ -101,7 +101,6 @@ describe("nameRing - heterocycles", () => {
   });
 
   it("pyrrole → 'pyrrole', N gets locant 1", () => {
-    const g = graphFromSmiles("c1ccnc1")!; // or [nH]1cccc1
     // Use explicit NH form
     const g2 = graphFromSmiles("[nH]1cccc1")!;
     const ring = perceiveRing(g2)!;
