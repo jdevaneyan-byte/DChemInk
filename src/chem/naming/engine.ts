@@ -478,6 +478,15 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     return nameMoleculeRingAsSubstituent(graph, ring, groups, pcgKind, pcgGroups);
   }
 
+  // If PCG is on an exocyclic carbon that cannot be expressed as an added-carbon suffix
+  // (acid/nitrile/aldehyde/amide can; alcohol/ketone/amine/etc. cannot), then the
+  // exocyclic carbon+group forms a chain parent and the ring is the substituent.
+  // e.g. OCC1CCCCC1 → cyclohexylmethanol (chain=CH2OH, ring sub=cyclohexyl)
+  //      OCc1ccccc1 → phenylmethanol (chain=CH2OH, ring sub=phenyl)
+  if (pcgKind && pcgOnExocyclicC && !pcgOnRingAtom && pcgKindToAddedCarbon(pcgKind) === null) {
+    return nameMoleculeRingAsSubstituent(graph, ring, groups, pcgKind, pcgGroups);
+  }
+
   // For two-part naming (acylHalide/ester/anhydride) on a ring — complex, defer
   if (pcgKind && (pcgKind === "acylHalide" || pcgKind === "ester" || pcgKind === "anhydride")) {
     return { name: null, status: "unsupported", reason: "acyl halide/ester/anhydride on ring — not yet supported in this tier" };
@@ -564,10 +573,50 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     }
   }
 
+  // Precompute substituent alpha keys for the alphabetical locant tie-break.
+  // We do a preliminary pass over all substituents to get (ringAtom → alphaKey)
+  // before calling nameRing, so the tie-break can be applied during locant assignment.
+  const subAlphaKeys = new Map<number, string>();
+  {
+    const halPfx: Record<string, string> = { F: "fluoro", Cl: "chloro", Br: "bromo", I: "iodo" };
+    // Strip leading digits/hyphens to get the alpha key (same as assemble.ts alphaKey)
+    const alphaKey = (n: string) => n.replace(/^\((.*)\)$/, "$1").replace(/^[\d,()\-\s]+/, "");
+
+    // Non-PCG groups directly on ring atoms contribute their prefix form
+    for (const g of groups) {
+      if (g.kind === pcgKind) continue; // PCG is handled by pcgAtoms, not alpha key
+      if (ringSet.has(g.carbon) && !subAlphaKeys.has(g.carbon)) {
+        subAlphaKeys.set(g.carbon, alphaKey(prefixForm(g)));
+      }
+    }
+
+    // Halogen and alkyl substituents from subMap
+    for (const [ringAtom, exoNbrs] of subMap) {
+      for (const exoNbr of exoNbrs) {
+        if (exocyclicPcgCarbons.has(exoNbr)) continue;
+        if (groups.some(g => g.atoms.includes(exoNbr) || g.carbon === exoNbr)) continue;
+
+        const atom = graph.atoms.find(a => a.index === exoNbr);
+        if (!atom) continue;
+
+        let subName: string | undefined;
+        if (["F", "Cl", "Br", "I"].includes(atom.element)) {
+          subName = halPfx[atom.element];
+        } else if (atom.element === "C") {
+          subName = nameSubstituent(exoCarbonGraph, exoNbr, ringAtom);
+        }
+        if (subName !== undefined && !subAlphaKeys.has(ringAtom)) {
+          subAlphaKeys.set(ringAtom, alphaKey(subName));
+        }
+      }
+    }
+  }
+
   const ringNaming = nameRing(graph, ring, {
     pcgAtoms: pcgRingAtoms.size > 0 ? pcgRingAtoms : undefined,
     unsatBonds,
     subAtoms: subRingAtoms.size > 0 ? subRingAtoms : undefined,
+    subAlphaKeys: subAlphaKeys.size > 0 ? subAlphaKeys : undefined,
   });
 
   if (!ringNaming) {

@@ -501,6 +501,8 @@ function matchHeterocycle(
  * opts.pcgAtoms: set of ring atom indices that carry the PCG
  * opts.unsatBonds: pairs [a,b] of ring atom indices that are double/triple bonds
  * opts.subAtoms: set of ring atom indices that have substituents
+ * opts.subAlphaKeys: map ring atom index → alphabetization key of its substituent
+ *   (used for the final IUPAC tie-break: alphabetically-first substituent gets lowest locant)
  */
 function assignCarbocycleLocants(
   ring: RingInfo,
@@ -508,10 +510,11 @@ function assignCarbocycleLocants(
     pcgAtoms?: Set<number>;
     unsatBonds?: [number, number][];
     subAtoms?: Set<number>;
+    subAlphaKeys?: Map<number, string>;
   } = {},
 ): Map<number, number> {
   const n = ring.size;
-  const { pcgAtoms, unsatBonds = [], subAtoms } = opts;
+  const { pcgAtoms, unsatBonds = [], subAtoms, subAlphaKeys } = opts;
 
   // We try all starting positions and both directions, pick best by priority ladder
   let bestMap: Map<number, number> | null = null;
@@ -597,7 +600,23 @@ function assignCarbocycleLocants(
           bestUnsat = unsatLocs;
           bestSub = subLocs;
           continue;
+        } else if (cmp > 0) {
+          continue;
         }
+      }
+
+      // Alphabetical tie-break: the substituent cited first alphabetically gets
+      // the lowest locant. Build a list of (alphaKey, locant) pairs sorted by key,
+      // then compare locants in that alpha-sorted order.
+      if (subAlphaKeys && subAlphaKeys.size > 0 && bestMap) {
+        const cmp = compareByAlphaLocant(locantOf, bestMap, subAlphaKeys);
+        if (cmp < 0) {
+          bestMap = locantOf;
+          bestPcg = pcgLocs;
+          bestUnsat = unsatLocs;
+          bestSub = subLocs;
+        }
+        // cmp >= 0: keep bestMap
       }
     }
   }
@@ -614,6 +633,44 @@ function compareArr(a: number[], b: number[]): number {
 }
 
 /**
+ * Alphabetical tie-break for ring numbering (IUPAC P-14.5):
+ * When two orientations give the same locant set for substituents, the one where
+ * the alphabetically-first substituent has the lower locant wins.
+ *
+ * Returns <0 if `candidate` wins over `current`, >0 if `current` wins, 0 if tied.
+ */
+function compareByAlphaLocant(
+  candidate: Map<number, number>,
+  current: Map<number, number>,
+  subAlphaKeys: Map<number, string>,
+): number {
+  // Build sorted-by-alpha list of (key, locant) for each orientation
+  function alphaLocants(locantOf: Map<number, number>): { key: string; locant: number }[] {
+    const pairs: { key: string; locant: number }[] = [];
+    for (const [atomIdx, alphaKey] of subAlphaKeys) {
+      const loc = locantOf.get(atomIdx);
+      if (loc !== undefined) pairs.push({ key: alphaKey, locant: loc });
+    }
+    // Sort by alpha key first, then by locant (to make comparison stable)
+    pairs.sort((x, y) => x.key < y.key ? -1 : x.key > y.key ? 1 : x.locant - y.locant);
+    return pairs;
+  }
+
+  const aCand = alphaLocants(candidate);
+  const aCurr = alphaLocants(current);
+  const len = Math.min(aCand.length, aCurr.length);
+  for (let i = 0; i < len; i++) {
+    // Same alpha key at position i: compare locants (lower is better)
+    if (aCand[i].key === aCurr[i].key) {
+      if (aCand[i].locant !== aCurr[i].locant) {
+        return aCand[i].locant - aCurr[i].locant;
+      }
+    }
+  }
+  return 0;
+}
+
+/**
  * Name the ring (carbocycle, benzene, or heterocycle) and return numbering.
  * Returns null for unsupported rings (non-tabled heterocycles, rings outside size range).
  */
@@ -624,6 +681,10 @@ export function nameRing(
     pcgAtoms?: Set<number>;
     unsatBonds?: [number, number][];
     subAtoms?: Set<number>;
+    /** Map: ring atom index → alphabetization key of its substituent name.
+     *  Used for the final IUPAC tie-break (alphabetically-first substituent
+     *  gets the lowest locant). Only needed for carbocycles/benzene. */
+    subAlphaKeys?: Map<number, string>;
   } = {},
 ): RingNaming | null {
   // ── Benzene (aromatic all-carbon 6-membered) ──────────────────────────────────
@@ -779,12 +840,18 @@ export function ringSubstituentName(
   // benzene → phenyl (special)
   if (kind === "benzene") return "phenyl";
 
-  // Base: drop trailing 'e' → add 'yl' with locant when > 1
-  // E.g. cyclohexane → cyclohexyl (locant 1 omitted for carbocycles)
-  //      pyridine → pyridin-2-yl
-  const base = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
-  if (attachLocant === 1 && kind === "carbocycle") {
-    return `${base}yl`;
+  // Carbocycles: cyclohexane → cyclohexyl (drop "-ane", add "-yl")
+  //   The "-ane" suffix removal (not just trailing 'e') gives the correct stem:
+  //   cyclohexane → cyclohex + yl = cyclohexyl (not cyclohexanyl).
+  // Heterocycles: drop trailing 'e' only → pyridine → pyridin-2-yl.
+  if (kind === "carbocycle") {
+    const base = parentName.endsWith("ane") ? parentName.slice(0, -3) : parentName;
+    if (attachLocant === 1) return `${base}yl`;
+    return `${base}-${attachLocant}-yl`;
   }
+
+  // Heterocycles: drop trailing 'e' → add '-locant-yl'
+  const base = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
+  if (attachLocant === 1) return `${base}yl`;
   return `${base}-${attachLocant}-yl`;
 }
