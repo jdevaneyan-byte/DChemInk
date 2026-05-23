@@ -68,3 +68,26 @@ describe("CLASS 2 — acid derivative demoted to prefix must decline", () => {
     expect(name("CC(=O)OCC")).toBe("ethyl ethanoate");
   });
 });
+
+describe("CLASS 3 — substituent on aromatic ring heteroatom implying hypervalence must decline", () => {
+  it("CCN1C=CS(CC)=C1 declines", () => {
+    expect(status("CCN1C=CS(CC)=C1")).toBe("unsupported");
+  });
+  it("CN1C=CS(C)=C1 declines", () => {
+    expect(status("CN1C=CS(C)=C1")).toBe("unsupported");
+  });
+
+  // Must STILL work — legitimate single substituent on pyrrole-type NH nitrogen.
+  it("Cn1cccc1 → 1-methylpyrrole still works", () => {
+    expect(name("Cn1cccc1")).toBe("1-methylpyrrole");
+  });
+  it("c1ccncc1 → pyridine still works", () => {
+    expect(name("c1ccncc1")).toBe("pyridine");
+  });
+  it("Cc1ccccn1 → 2-methylpyridine still works", () => {
+    expect(name("Cc1ccccn1")).toBe("2-methylpyridine");
+  });
+  it("c1ccoc1 → furan still works", () => {
+    expect(name("c1ccoc1")).toBe("furan");
+  });
+});

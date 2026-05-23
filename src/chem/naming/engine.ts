@@ -527,6 +527,50 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
 
   const ringSet = new Set(ring.atoms);
 
+  // ── CLASS 3 (NO WRONG NAMES): hypervalent/charged ring heteroatom ───────────
+  // A substituent on an aromatic ring heteroatom can imply a hypervalent or
+  // charged species that RDKit canonicalises differently (e.g. CCN1C=CS(CC)=C1
+  // has a hypervalent [SH]-type S). Naming such a structure as a normal thiazole
+  // drops/misrepresents the substituent.
+  //   - aromatic O or S bearing ANY exocyclic substituent → hypervalent → decline
+  //   - aromatic "pyridine-type" N (an in-ring double bond) bearing a substituent
+  //     → charged (pyridinium) → decline
+  //   - aromatic "pyrrole-type" N (both ring bonds single) legitimately bears ONE
+  //     substituent (1-methylpyrrole, 1-methylimidazole); a SECOND one would
+  //     charge it → decline.
+  if (ring.aromatic) {
+    for (const hetIdx of ring.heteroatoms) {
+      const het = graph.atoms.find((a) => a.index === hetIdx);
+      if (!het) continue;
+      // Exocyclic non-H, non-ring neighbours = substituents on this heteroatom.
+      const exoSubs = neighborsOf(graph, hetIdx).filter(
+        (n) => !ringSet.has(n) && graph.atoms.find((a) => a.index === n)?.element !== "H",
+      );
+      if (exoSubs.length === 0) continue;
+      if (het.element === "O" || het.element === "S") {
+        return {
+          name: null,
+          status: "unsupported",
+          reason: "substituent on aromatic ring O/S implies a hypervalent species — Tier 4",
+        };
+      }
+      if (het.element === "N") {
+        const hasRingDoubleBond = graph.bonds.some(
+          (b) => b.order === 2 && ((b.from === hetIdx && ringSet.has(b.to)) || (b.to === hetIdx && ringSet.has(b.from))),
+        );
+        // Pyridine-type N (in-ring double bond) with a substituent → pyridinium.
+        // Pyrrole-type N with more than one substituent → charged.
+        if (hasRingDoubleBond || exoSubs.length > 1) {
+          return {
+            name: null,
+            status: "unsupported",
+            reason: "substituent on aromatic ring N implies a charged species — Tier 4",
+          };
+        }
+      }
+    }
+  }
+
   // Perceive functional groups (same as acyclic path)
   const perception = perceiveGroups(graph);
   if (perception.unsupported) {
