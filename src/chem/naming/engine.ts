@@ -603,8 +603,9 @@ function nameSaturatedLactamLactone(
   const HAL_PREFIX: Record<string, string> = { F: "fluoro", Cl: "chloro", Br: "bromo", I: "iodo" };
 
   // ── Collect exocyclic substituents on ring atoms ──────────────────────────────
-  // Map: ring atom index → substituent name string (or null if not expressible)
-  const ringAtomSubs = new Map<number, string>(); // ring atom → substituent name
+  // List of (ring atom index, substituent name) pairs.
+  // Multiple substituents on the same ring atom are allowed (gem-disubstitution).
+  const ringAtomSubList: { ringAtomIdx: number; subName: string }[] = [];
 
   // Build exo carbon graph (non-ring carbons only) for nameSubstituent
   const exoCg = buildCarbonGraph(graph);
@@ -627,16 +628,10 @@ function nameSaturatedLactamLactone(
       // Exocyclic heavy atom: must be accounted for
       if (nbr === exoOIdx) continue; // the carbonyl =O — handled as suffix
 
-      // Check for multiple substituents on the same ring atom (only simple cases for now)
-      if (ringAtomSubs.has(ringAtomIdx)) {
-        // More than one substituent on the same ring atom → decline (complex, not yet supported)
-        return null;
-      }
-
       // Name the substituent
       if (HAL_ELEMENTS.has(nbrAtom.element)) {
         // Direct halogen substituent
-        ringAtomSubs.set(ringAtomIdx, HAL_PREFIX[nbrAtom.element]);
+        ringAtomSubList.push({ ringAtomIdx, subName: HAL_PREFIX[nbrAtom.element] });
       } else if (nbrAtom.element === "C") {
         // Alkyl substituent: must be a simple chain with no ring atoms
         // Check that the substituent subtree contains no ring atoms and no heteroatoms
@@ -664,7 +659,7 @@ function nameSaturatedLactamLactone(
           return null;
         }
         const subName = nameSubstituent(exoCg, nbr, ringAtomIdx);
-        ringAtomSubs.set(ringAtomIdx, subName);
+        ringAtomSubList.push({ ringAtomIdx, subName });
       } else {
         // Other element (O, N, S, etc.) not as halide → decline
         return null;
@@ -747,7 +742,7 @@ function nameSaturatedLactamLactone(
   // ── Assign substituent locants and check expressibility ──────────────────────
   const ringNameSubs: { locant: number; name: string }[] = [];
 
-  for (const [ringAtomIdx, subName] of ringAtomSubs) {
+  for (const { ringAtomIdx, subName } of ringAtomSubList) {
     const loc = locantOf.get(ringAtomIdx);
     if (loc === undefined) return null;
     ringNameSubs.push({ locant: loc, name: subName });

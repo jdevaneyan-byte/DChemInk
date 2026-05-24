@@ -122,6 +122,14 @@ describe("Tier 4 Stage 1 – additional substituted lactams/lactones", () => {
 // ── PubChem name-string sample: comprehensive verification ────────────────────
 // All names verified against PubChem IUPAC names (2026-05-24).
 // diff classifications: 0 ACCEPTABLE diffs, 0 BUGs.
+describe("Tier 4 Stage 1 – gem-disubstituted (two substituents same carbon)", () => {
+  it("O=C1CC(C)(C)N1 → 4,4-dimethylazetidin-2-one", () =>
+    expect(name("O=C1CC(C)(C)N1")).toBe("4,4-dimethylazetidin-2-one"));
+
+  it("O=C1CC(C)CC(C)N1 → 4,6-dimethylpiperidin-2-one", () =>
+    expect(name("O=C1CC(C)CC(C)N1")).toBe("4,6-dimethylpiperidin-2-one"));
+});
+
 describe("Tier 4 Stage 1 – PubChem name-string sample (pyrrolidinones)", () => {
   // Positional coverage for pyrrolidinone: C3, C4, C5, N1
   it("O=C1C(C)CCN1 → 3-methylpyrrolidin-2-one", () =>
