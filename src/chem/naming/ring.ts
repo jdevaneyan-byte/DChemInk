@@ -449,6 +449,27 @@ const HETERO_TABLE: HeteroEntry[] = [
     // N at 1 and 4: N-C-C-N-C-C
     elementSeqs: [["N", "C", "C", "N", "C", "C"]],
   },
+  // ── Saturated 4-membered (one O) = oxetane ──
+  {
+    name: "oxetane",
+    size: 4,
+    aromatic: false,
+    elementSeqs: [["O", "C", "C", "C"]],
+  },
+  // ── Saturated 7-membered (one N) = azepane ──
+  {
+    name: "azepane",
+    size: 7,
+    aromatic: false,
+    elementSeqs: [["N", "C", "C", "C", "C", "C", "C"]],
+  },
+  // ── Saturated 7-membered (one O) = oxepane ──
+  {
+    name: "oxepane",
+    size: 7,
+    aromatic: false,
+    elementSeqs: [["O", "C", "C", "C", "C", "C", "C"]],
+  },
 ];
 
 /**

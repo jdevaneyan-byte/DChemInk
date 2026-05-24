@@ -314,9 +314,10 @@ describe("Tier 3 – rejections (Tier 4 / out-of-scope)", () => {
     expect(reason("c1ccc2ccccc2c1")).toMatch(/Tier 4|fused|multiple ring/i);
   });
 
-  it("7-membered N ring (azepane) → unsupported", () => {
-    // Azepane: C1CCCCNC1 - 7 membered saturated N ring not in table
-    expect(status("C1CCCCNC1")).toBe("unsupported");
+  it("7-membered N ring (azepane) → azepane (now supported; added for azepan-2-one)", () => {
+    // Azepane: C1CCCCNC1 — added to the ring table in T4 Stage 1 to enable azepan-2-one.
+    // PubChem: "azepane" ✓
+    expect(name("C1CCCCNC1")).toBe("azepane");
   });
 
   it("Tier 1/2 acyclic still works", () => {

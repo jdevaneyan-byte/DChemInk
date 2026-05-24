@@ -4,7 +4,7 @@ import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } fro
 import { nameSubstituent } from "./substituent";
 import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, type SuffixKind, type Sub } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
-import { perceiveRing, nameRing, ringSubstituentName } from "./ring";
+import { perceiveRing, nameRing, ringSubstituentName, type RingInfo } from "./ring";
 
 /**
  * Elements supported by Tier 2+3 (C, H, O, N, F, Cl, Br, I, S for heterocycles).
@@ -512,6 +512,252 @@ function isDirectlyAttachedToRing(graph: MolGraph, idx: number, ringSet: Set<num
   );
 }
 
+// ── Tier 4 Stage 1: cyclic carbonyl naming ───────────────────────────────────
+
+/**
+ * Parent names for saturated cyclic carbonyl (lactam/lactone) formation.
+ * Maps the saturated heterocycle name → name with trailing 'e' elided (ready for -one suffix).
+ */
+const SATURATED_CYCLIC_PARENT_BASE: Record<string, string> = {
+  // Lactams (N-heterocycles)
+  azetidine: "azetidin",     // azetidin-2-one
+  pyrrolidine: "pyrrolidin", // pyrrolidin-2-one
+  piperidine: "piperidin",   // piperidin-2-one
+  azepane: "azepan",         // azepan-2-one
+  // Lactones (O-heterocycles)
+  oxetane: "oxetan",         // oxetan-2-one
+  oxolane: "oxolan",         // oxolan-2-one
+  oxane: "oxan",             // oxan-2-one
+  oxepane: "oxepan",         // oxepan-2-one
+};
+
+/**
+ * Handle Tier 4 Stage 1 cyclic carbonyls: lactams, lactones, and aromatic ring-carbonyls.
+ *
+ * Returns a NameResult (named or unsupported) or null if the case is outside our scope
+ * (the caller will then fall back to the old decline).
+ *
+ * Called when:
+ * (a) cyclicCarbonylGroups.length > 0 (ring C with exo =O and in-ring heteroatom), OR
+ * (b) the ring has ring double bonds AND a ring C has an exo =O (mancude ring-carbonyl)
+ */
+function nameCyclicCarbonyl(
+  graph: MolGraph,
+  ring: RingInfo,
+  ringSet: Set<number>,
+  _allGroups: Group[],
+  cyclicCarbonylGroups: Group[],
+): NameResult | null {
+  // ── Determine if saturated or mancude/aromatic ring-carbonyl ──────────────
+  // "Saturated" means: the ring has NO double bonds among ring-ring bonds.
+  // The exocyclic C=O is not a ring bond.
+  const ringDoubleBonds = graph.bonds.filter(
+    b => b.order === 2 && ringSet.has(b.from) && ringSet.has(b.to)
+  );
+  const isSaturatedRing = ringDoubleBonds.length === 0;
+
+  if (isSaturatedRing) {
+    return nameSaturatedLactamLactone(graph, ring, ringSet, cyclicCarbonylGroups);
+  } else {
+    return nameAromaticRingCarbonyl(graph, ring, ringSet);
+  }
+}
+
+/**
+ * Name a saturated lactam or lactone.
+ *
+ * Strategy:
+ * 1. Verify exactly ONE cyclic carbonyl group, no additional exocyclic substituents
+ *    (for simplicity; we decline if there are other substituents for now).
+ * 2. Get parent ring name via nameRing (treating the ring C(=O) as a plain C).
+ * 3. Map: parent → stem (e-elision), append -X-one where X = locant of the carbonyl C.
+ */
+function nameSaturatedLactamLactone(
+  graph: MolGraph,
+  ring: import("./ring").RingInfo,
+  ringSet: Set<number>,
+  cyclicCarbonylGroups: Group[],
+): NameResult | null {
+  // Only handle rings with exactly ONE cyclic carbonyl for now.
+  if (cyclicCarbonylGroups.length !== 1) {
+    return null; // multiple ring carbonyls → decline (later Tier 4)
+  }
+
+  const carbonylGroup = cyclicCarbonylGroups[0];
+  // Verify this is an amide (lactam) or ester (lactone) — these are the supported kinds
+  if (carbonylGroup.kind !== "amide" && carbonylGroup.kind !== "ester") {
+    return null;
+  }
+
+  // The exocyclic =O atom
+  const exoOIdx = carbonylGroup.atoms.find(a => !ringSet.has(a));
+  if (exoOIdx === undefined) return null;
+  const exoOAtom = graph.atoms.find(a => a.index === exoOIdx);
+  if (!exoOAtom || exoOAtom.element !== "O") return null;
+
+  // Verify there are no other exocyclic non-H substituents on the ring
+  // (no halogens, alkyl chains, etc. — bare lactam/lactone only)
+  for (const ringAtomIdx of ring.atoms) {
+    for (const b of graph.bonds) {
+      const nbr = b.from === ringAtomIdx ? b.to : b.to === ringAtomIdx ? b.from : -1;
+      if (nbr < 0) continue;
+      if (ringSet.has(nbr)) continue; // ring bond
+      const nbrAtom = graph.atoms.find(a => a.index === nbr);
+      if (!nbrAtom || nbrAtom.element === "H") continue;
+      // Exocyclic heavy atom: must be the exo O of our one carbonyl
+      if (nbr === exoOIdx) continue;
+      // Anything else → substituents present → decline for now
+      return null;
+    }
+  }
+
+  // Get the ring naming: treat the ring as-is (the ring C that bears =O is just a ring C
+  // in terms of element sequence). The ring should match a saturated heterocycle in the table.
+  const ringNaming = nameRing(graph, ring, {});
+  if (!ringNaming) return null;
+  if (ringNaming.kind !== "heterocycle") return null; // only heterocycles produce lactams/lactones
+
+  const parentName = ringNaming.parent;
+  const locantOf = ringNaming.locantOf;
+
+  // Look up the e-elided stem
+  const stem = SATURATED_CYCLIC_PARENT_BASE[parentName];
+  if (!stem) return null; // parent not in our table (shouldn't happen if ring table is complete)
+
+  // Get the locant of the carbonyl ring carbon
+  const carbonylLoc = locantOf.get(carbonylGroup.carbon);
+  if (carbonylLoc === undefined) return null;
+
+  // The name is: stem + "-" + carbonylLoc + "-one"
+  // (e.g. "pyrrolidin" + "-2-one" = "pyrrolidin-2-one")
+  const finalName = `${stem}-${carbonylLoc}-one`;
+  return { name: finalName, status: "named" };
+}
+
+/**
+ * Name an aromatic/mancude ring carbonyl with indicated hydrogen.
+ *
+ * Handles pyridinones, pyranones, uracil-type diones.
+ * OPSIN-round-trip invariant: decline if indicated-H cannot be reliably computed.
+ *
+ * Strategy:
+ * 1. Collect all ring C atoms with an exocyclic =O (carbonyl positions).
+ * 2. Collect ring heteroatoms with H (indicated-H sites).
+ * 3. Look up the AROMATIC heterocycle parent via a modified ring info (aromaticity forced).
+ * 4. Assign locants; build the name with indicated-H suffix notation.
+ *
+ * For pyranone (O with no H, C-H is the indicated-H site): special 2H-pyran-2-one form.
+ * Returns a NameResult or { name: null, status: "unsupported" } (never null).
+ */
+function nameAromaticRingCarbonyl(
+  graph: MolGraph,
+  ring: RingInfo,
+  ringSet: Set<number>,
+): NameResult {
+  const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+
+  // Collect all exocyclic =O atoms on ring carbons (carbonyl Cs)
+  const exoCarbonylO: { ringC: number; oIdx: number }[] = [];
+  for (const rIdx of ring.atoms) {
+    const rAtom = atomById.get(rIdx);
+    if (!rAtom || rAtom.element !== "C") continue;
+    for (const b of graph.bonds) {
+      if (b.order !== 2) continue;
+      const oIdx = b.from === rIdx ? b.to : b.to === rIdx ? b.from : -1;
+      if (oIdx < 0) continue;
+      if (ringSet.has(oIdx)) continue; // ring bond, not exo =O
+      const oAtom = atomById.get(oIdx);
+      if (oAtom?.element === "O") {
+        exoCarbonylO.push({ ringC: rIdx, oIdx });
+      }
+    }
+  }
+
+  if (exoCarbonylO.length === 0) {
+    return { name: null, status: "unsupported", reason: "mancude ring — no ring-carbonyl found" };
+  }
+
+  // Verify no exocyclic substituents other than carbonyl oxygens
+  const carbonylOSet = new Set(exoCarbonylO.map(x => x.oIdx));
+  for (const rIdx of ring.atoms) {
+    for (const b of graph.bonds) {
+      const nbr = b.from === rIdx ? b.to : b.to === rIdx ? b.from : -1;
+      if (nbr < 0 || ringSet.has(nbr)) continue;
+      const nbrAtom = atomById.get(nbr);
+      if (!nbrAtom || nbrAtom.element === "H") continue;
+      if (!carbonylOSet.has(nbr)) {
+        return { name: null, status: "unsupported", reason: "mancude ring carbonyl with additional substituents — not yet supported" };
+      }
+    }
+  }
+
+  // Collect ring heteroatoms with H (indicated-H candidates)
+  const indicatedHAtoms = ring.heteroatoms.filter(idx => (atomById.get(idx)?.hydrogens ?? 0) >= 1);
+
+  // Look up the aromatic parent by creating a "forced-aromatic" ring info.
+  // The mancude ring carbonyl's parent is the aromatic heterocycle (e.g. pyridine, pyrimidine, pyran).
+  // We match by creating a modified ring info where aromatic = true.
+  const aromaticRing: RingInfo = {
+    atoms: ring.atoms,
+    size: ring.size,
+    aromatic: true,
+    heteroatoms: ring.heteroatoms,
+  };
+  const aromaticNaming = nameRing(graph, aromaticRing, {});
+  if (!aromaticNaming || aromaticNaming.kind !== "heterocycle") {
+    return { name: null, status: "unsupported", reason: "aromatic ring carbonyl — parent ring not recognized" };
+  }
+
+  const parentName = aromaticNaming.parent;
+  const locantOf = aromaticNaming.locantOf;
+
+  // Carbonyl locants (sorted ascending)
+  const carbonylLocs = exoCarbonylO
+    .map(x => locantOf.get(x.ringC))
+    .filter((l): l is number => l !== undefined)
+    .sort((a, b) => a - b);
+
+  if (carbonylLocs.length !== exoCarbonylO.length) {
+    return { name: null, status: "unsupported", reason: "aromatic ring carbonyl — could not assign carbonyl locants" };
+  }
+
+  // Indicated-H locants (sorted ascending)
+  const indicatedHLocs = indicatedHAtoms
+    .map(idx => locantOf.get(idx))
+    .filter((l): l is number => l !== undefined)
+    .sort((a, b) => a - b);
+
+  // e-elision for the parent stem
+  const parentStem = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
+
+  // ── Case A/B: N-heterocycle with N-H indicated hydrogen (pyridinone, uracil) ──
+  if (indicatedHLocs.length > 0) {
+    const indicatedHStr = indicatedHLocs.map(l => `${l}H`).join(",");
+    let nameTxt: string;
+    if (carbonylLocs.length === 1) {
+      nameTxt = `${parentStem}-${carbonylLocs[0]}(${indicatedHStr})-one`;
+    } else {
+      const multPfx = carbonylLocs.length === 2 ? "di" : carbonylLocs.length === 3 ? "tri" : "";
+      nameTxt = `${parentStem}-${carbonylLocs.join(",")}(${indicatedHStr})-${multPfx}one`;
+    }
+    return { name: nameTxt, status: "named" };
+  }
+
+  // ── Case C: O-heterocycle pyranone — 2H-pyran-2-one ──
+  // For 2H-pyran-2-one (O=c1cccco1): the ring O has no H, so indicatedHLocs is empty.
+  // The "2H" prefix form is the IUPAC standard for this compound.
+  // Per IUPAC P-31.1.3.4: when indicated hydrogen is at the same position as the ketone,
+  // the name takes the form "2H-pyran-2-one".
+  // OPSIN parses "2H-pyran-2-one" and "pyran-2-one" both to the same structure.
+  if (parentName === "pyran" && carbonylLocs.length === 1) {
+    const loc = carbonylLocs[0];
+    return { name: `2H-pyran-${loc}-one`, status: "named" };
+  }
+
+  // Cannot determine indicated H → decline (no wrong name)
+  return { name: null, status: "unsupported", reason: "aromatic ring carbonyl — could not determine indicated hydrogen" };
+}
+
 /**
  * Name a single-ring molecule. Called by nameMolecule when hasRing() is true.
  */
@@ -595,16 +841,30 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     return true;
   });
 
-  // ── Cyclic carbonyl guard (Bug B / Tier-4 lactams & lactones) ────────────────
-  // A ring carbonyl is one where the group's carbon is in the ring AND at least
-  // one of the group's heteroatoms (N for amide, O for lactone/anhydride) is also
-  // in the ring. This produces lactams (pyridinones, pyrrolidinones) or lactones
-  // that are genuinely Tier-4 tautomeric/indicated-hydrogen heterocyclics.
-  // We must NOT mis-name these as piperidine-amide or similar.
-  for (const g of groups) {
-    if (ringSet.has(g.carbon) && g.atoms.some(a => ringSet.has(a))) {
-      // Cyclic amide (lactam): carbon in ring, N also in ring
-      // Cyclic acid/ketone variations: if heteroatom is ring O/N, also Tier 4
+  // ── Cyclic carbonyl (Tier 4 Stage 1): lactams / lactones / aromatic ring-carbonyls ──
+  // A ring carbonyl: group's carbon is in the ring AND at least one heteroatom in g.atoms
+  // is also in the ring (N for lactam, O for lactone; also =O in aromatic ring-carbonyl).
+  {
+    const cyclicCarbonylGroups = groups.filter(
+      g => ringSet.has(g.carbon) && g.atoms.some(a => ringSet.has(a))
+    );
+
+    // Also detect "mancude ring-carbonyl": ring has ring double bonds AND a ring C has
+    // an exo =O (perceived as ketone because the in-ring N was filtered out of groups).
+    // This prevents wrong names like "piperidin-4-one" for pyridinone.
+    const ringDoubleBondsExist = graph.bonds.some(
+      b => b.order === 2 && ringSet.has(b.from) && ringSet.has(b.to)
+    );
+    const hasRingCarbonylKetone = ringDoubleBondsExist && groups.some(
+      g => (g.kind === "ketone" || g.kind === "aldehyde") && ringSet.has(g.carbon)
+    );
+    const hasMancudeCarbonyl = hasRingCarbonylKetone && ring.heteroatoms.length > 0;
+
+    if (cyclicCarbonylGroups.length > 0 || hasMancudeCarbonyl) {
+      // Route to Tier 4 Stage 1 handler
+      const t4Result = nameCyclicCarbonyl(graph, ring, ringSet, groups, cyclicCarbonylGroups);
+      if (t4Result !== null) return t4Result;
+      // If handler returns null → fall through to the old decline below
       return {
         name: null,
         status: "unsupported",
