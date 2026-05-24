@@ -134,11 +134,19 @@ describe("Task 4 – OPSIN round-trip audit (fused ring systems)", () => {
 
 // ── Roadmap: T4 Stage 2 done; remaining stages ───────────────────────────────
 describe("Task 4 – roadmap: remaining unsupported → decline with reason", () => {
-  it("bridged ring (norbornane) → bridged decline", () => {
+  it("bridged ring (norbornane) → now named by Stage 3 (T4S3)", () => {
+    // Stage 3 (T4S3) implemented von Baeyer bridged naming.
     const g = graphFromSmiles("C1CC2CCC1C2");
     const r = g ? nameMolecule(g) : null;
+    expect(r?.status).toBe("named");
+    expect(r?.name).toBe("bicyclo[2.2.1]heptane");
+  });
+
+  it("unsupported bridged ring (general tricyclic, not adamantane) → decline", () => {
+    // cubane-like or uncurated tricyclics are still declined
+    const g = graphFromSmiles("C12C3C4C1C5C4C3C25"); // cubane
+    const r = g ? nameMolecule(g) : null;
     expect(r?.status).toBe("unsupported");
-    expect(r?.reason).toMatch(/bridged/i);
   });
 
   it("spiro ring → spiro decline", () => {

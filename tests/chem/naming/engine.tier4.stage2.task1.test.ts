@@ -94,9 +94,10 @@ describe("engine routing – Stage 0 stubs", () => {
     expect(reason("C1CCC2(CC1)CCCCC2")).toMatch(/spiro/i);
   });
 
-  it("norbornane → unsupported, reason mentions bridged", () => {
-    expect(status("C1CC2CCC1C2")).toBe("unsupported");
-    expect(reason("C1CC2CCC1C2")).toMatch(/bridged/i);
+  it("norbornane → now named (Stage 3 bridged implemented)", () => {
+    // Stage 3 (T4S3) implemented von Baeyer bridged naming; norbornane is now supported.
+    expect(status("C1CC2CCC1C2")).toBe("named");
+    expect(nameMolecule(graph("C1CC2CCC1C2")).name).toBe("bicyclo[2.2.1]heptane");
   });
 
   it("biphenyl → unsupported, reason mentions assembly", () => {

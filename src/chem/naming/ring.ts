@@ -123,8 +123,10 @@ export function perceiveRingSystem(graph: MolGraph): RingSystemInfo {
         ringNeighbors[i].add(j);
         ringNeighbors[j].add(i);
       } else {
-        // 4+ shared atoms: complex topology
-        hasOther = true;
+        // 4+ shared atoms: could be a complex bridged system (e.g. bicyclo[2.2.2]octane
+        // whose 3 SSSR rings each share 4 atoms with each other) or truly complex topology.
+        // Flag as "mayBeBridged4" for secondary analysis; mark ringNeighbors as connected.
+        hasBridged = true;  // tentatively; secondary check below validates
         ringNeighbors[i].add(j);
         ringNeighbors[j].add(i);
       }
@@ -144,6 +146,29 @@ export function perceiveRingSystem(graph: MolGraph): RingSystemInfo {
     }
   }
   const isDisconnectedAssembly = ringVisited.size < rings.length;
+
+  // Secondary bridgehead check: when hasBridged was set (possibly from a 4+ shared atoms pair),
+  // validate by counting ring atoms with internal degree ≥ 3 (the bridgeheads).
+  // Valid bridged systems:
+  //   2 bridgeheads → standard bicyclo (bicyclo[a.b.c], e.g. norbornane, bicyclo[2.2.2]octane)
+  //   4 bridgeheads → polycyclic bridged (tricyclo, e.g. adamantane)
+  //   other → truly complex topology → "other"
+  if (hasBridged && !hasSpiro) {
+    // Count ring-internal degree for all atoms
+    const ringDeg = new Map<number, number>();
+    for (const a of allAtoms) ringDeg.set(a, 0);
+    for (const b of graph.bonds) {
+      if (allAtoms.has(b.from) && allAtoms.has(b.to)) {
+        ringDeg.set(b.from, (ringDeg.get(b.from) ?? 0) + 1);
+        ringDeg.set(b.to, (ringDeg.get(b.to) ?? 0) + 1);
+      }
+    }
+    const bridgeheadCount = [...ringDeg.values()].filter(d => d >= 3).length;
+    if (bridgeheadCount !== 2 && bridgeheadCount !== 4) {
+      // Truly complex polycyclic (can't be confidently handled as bridged)
+      hasOther = true;
+    }
+  }
 
   let kind: RingSystemKind;
   if (hasOther) {
@@ -1751,6 +1776,500 @@ export function nameFusedRing(
   }
 
   return null;
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
+// T4 Stage 3: von Baeyer (bridged) ring system naming
+// ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Result of von Baeyer bridge detection.
+ *
+ * bridgeheads: [bh1, bh2] — the two bridgehead atom indices
+ * bridges: paths between the bridgeheads, sorted longest-first.
+ *          Each bridge is the sequence of INTERIOR atoms (excluding the bridgeheads).
+ *          bridge[0] is the longest (size a), bridge[1] is second (size b), bridge[2] shortest (c).
+ */
+export interface BridgedBicyclicInfo {
+  bridgeheads: [number, number];
+  bridges: number[][];   // 3 bridges, sorted by length descending; interior atoms only
+  ringAtoms: Set<number>;
+}
+
+/**
+ * Find the two bridgehead atoms in a bicyclic ring system.
+ *
+ * Bridgeheads are ring atoms with degree ≥ 3 within the ring bond graph.
+ * In a bicyclo[a.b.c] system there are exactly 2 bridgeheads.
+ *
+ * Returns null if the ring system is not a simple bicyclic (exactly 2 bridgeheads).
+ */
+function findBridgeheads(ringSys: RingSystemInfo, graph: MolGraph): [number, number] | null {
+  // Build ring-internal degree (count only ring-to-ring bonds)
+  const ringDeg = new Map<number, number>();
+  for (const a of ringSys.atoms) ringDeg.set(a, 0);
+  for (const b of graph.bonds) {
+    if (ringSys.atoms.has(b.from) && ringSys.atoms.has(b.to)) {
+      ringDeg.set(b.from, (ringDeg.get(b.from) ?? 0) + 1);
+      ringDeg.set(b.to, (ringDeg.get(b.to) ?? 0) + 1);
+    }
+  }
+
+  const bh: number[] = [];
+  for (const [atom, deg] of ringDeg) {
+    if (deg >= 3) bh.push(atom);
+  }
+
+  if (bh.length !== 2) return null;
+  return [bh[0], bh[1]];
+}
+
+/**
+ * Find all simple paths between bh1 and bh2 that stay within the ring atom set.
+ * Returns the interior atoms (excluding the bridgeheads) for each bridge path.
+ *
+ * We use DFS; there are exactly 3 in a standard bicyclic system.
+ * Returns null if not exactly 3 bridges found (bad topology).
+ */
+function findBridges(
+  bh1: number,
+  bh2: number,
+  ringSys: RingSystemInfo,
+  graph: MolGraph,
+): number[][] | null {
+  // Build adjacency restricted to ring atoms
+  const adj = new Map<number, number[]>();
+  for (const a of ringSys.atoms) adj.set(a, []);
+  for (const b of graph.bonds) {
+    if (ringSys.atoms.has(b.from) && ringSys.atoms.has(b.to)) {
+      adj.get(b.from)!.push(b.to);
+      adj.get(b.to)!.push(b.from);
+    }
+  }
+
+  const bridges: number[][] = [];
+
+  // DFS from bh1 to bh2, collecting interior atoms (not bh1 or bh2)
+  function dfs(path: number[], visited: Set<number>): void {
+    const cur = path[path.length - 1];
+    for (const nbr of adj.get(cur) ?? []) {
+      if (nbr === bh2) {
+        // Found a bridge: interior is path[1..] (excluding bh1)
+        bridges.push(path.slice(1));
+        continue;
+      }
+      if (visited.has(nbr) || nbr === bh1) continue;
+      visited.add(nbr);
+      path.push(nbr);
+      dfs(path, visited);
+      path.pop();
+      visited.delete(nbr);
+    }
+  }
+
+  dfs([bh1], new Set([bh1]));
+
+  if (bridges.length !== 3) return null;
+
+  // Sort bridges longest-first (a ≥ b ≥ c)
+  bridges.sort((x, y) => y.length - x.length);
+  return bridges;
+}
+
+/**
+ * Detect and return the full bicyclic bridge structure, or null if the ring
+ * system cannot be identified as a simple bicyclo[a.b.c] skeleton.
+ */
+export function detectBridgedBicyclic(
+  ringSys: RingSystemInfo,
+  graph: MolGraph,
+): BridgedBicyclicInfo | null {
+  const bhs = findBridgeheads(ringSys, graph);
+  if (!bhs) return null;
+
+  const bridges = findBridges(bhs[0], bhs[1], ringSys, graph);
+  if (!bridges) return null;
+
+  // Verify all ring atoms are accounted for (2 bridgeheads + bridge interiors)
+  const counted = new Set<number>(bhs);
+  for (const br of bridges) for (const a of br) counted.add(a);
+  if (counted.size !== ringSys.atoms.size) return null;
+
+  return {
+    bridgeheads: bhs,
+    bridges,
+    ringAtoms: ringSys.atoms,
+  };
+}
+
+// ── Curated tricyclics (adamantane) ──────────────────────────────────────────
+
+/**
+ * Build a canonical connectivity fingerprint for a ring system.
+ * Used to identify adamantane by its skeleton.
+ * Format: sorted-degree sequence joined with "-".
+ */
+function skeletonFingerprint(ringSys: RingSystemInfo, graph: MolGraph): string {
+  const deg = new Map<number, number>();
+  for (const a of ringSys.atoms) deg.set(a, 0);
+  for (const b of graph.bonds) {
+    if (ringSys.atoms.has(b.from) && ringSys.atoms.has(b.to)) {
+      deg.set(b.from, (deg.get(b.from) ?? 0) + 1);
+      deg.set(b.to, (deg.get(b.to) ?? 0) + 1);
+    }
+  }
+  // Also count element labels
+  const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+  const nodeTokens: string[] = [];
+  for (const a of ringSys.atoms) {
+    const el = atomById.get(a)?.element ?? "C";
+    const d = deg.get(a) ?? 0;
+    nodeTokens.push(`${el}${d}`);
+  }
+  nodeTokens.sort();
+  return nodeTokens.join(",");
+}
+
+/**
+ * Adamantane skeleton: 10 carbons; 4 bridgehead C3 + 6 bridge C2 = "C3,C3,C3,C3,C2,C2,C2,C2,C2,C2"
+ * PubChem IUPAC name: "adamantane" (retained); SMILES: C1C2CC3CC1CC(C2)C3
+ * systematic: tricyclo[3.3.1.1^{3,7}]decane (note superscript notation)
+ */
+const ADAMANTANE_FINGERPRINT = "C2,C2,C2,C2,C2,C2,C3,C3,C3,C3";
+
+/**
+ * Check if this ring system is adamantane (all-carbon, 10 atoms, correct degree sequence).
+ */
+export function isAdamantane(ringSys: RingSystemInfo, graph: MolGraph): boolean {
+  if (ringSys.atoms.size !== 10) return false;
+  // All ring atoms must be carbon
+  const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+  for (const a of ringSys.atoms) {
+    if ((atomById.get(a)?.element ?? "") !== "C") return false;
+  }
+  const fp = skeletonFingerprint(ringSys, graph);
+  return fp === ADAMANTANE_FINGERPRINT;
+}
+
+// ── Von Baeyer numbering ──────────────────────────────────────────────────────
+
+/**
+ * Alkane stem names for chain lengths used in von Baeyer nomenclature.
+ * bicyclo[a.b.c]<stem>ane where stem = parent chain for (a+b+c+2) atoms.
+ */
+const VB_ALKANE_STEMS: Record<number, string> = {
+  5:  "pentane",
+  6:  "hexane",
+  7:  "heptane",
+  8:  "octane",
+  9:  "nonane",
+  10: "decane",
+  11: "undecane",
+  12: "dodecane",
+};
+
+/**
+ * Heteroatom replacement prefix for von Baeyer nomenclature.
+ * Priority order per IUPAC: O > S > N (Hantzsch-Widman/replacement 'a' nomenclature).
+ */
+const VB_HETERO_PREFIX: Record<string, string> = {
+  O: "oxa",
+  S: "thia",
+  N: "aza",
+};
+
+/** Priority for heteroatom replacement (lower = higher priority for lowest locant). */
+const VB_HETERO_PRIORITY: Record<string, number> = {
+  O: 1, S: 2, N: 3,
+};
+
+export interface VonBaeyerNaming {
+  /** Full IUPAC name (e.g. "bicyclo[2.2.1]heptane") */
+  name: string;
+  /** Map from ring atom index → IUPAC locant (1-based) */
+  locantOf: Map<number, number>;
+  /** Descriptor string, e.g. "2.2.1" */
+  descriptor: string;
+  /** Parent alkane stem, e.g. "bicyclo[2.2.1]heptane" */
+  parent: string;
+}
+
+/**
+ * Build the von Baeyer name for a bridged bicyclic ring system.
+ *
+ * Algorithm:
+ * 1. Two bridgeheads bh1, bh2; bridges sorted a ≥ b ≥ c.
+ * 2. Try both choices of start bridgehead × both directions of b (bridge[1])
+ *    (c bridge traversal direction is fixed once bh1,bh2,a,b are fixed).
+ * 3. For each candidate numbering, compute heteroatom locants → select lowest.
+ * 4. Assemble name with heteroatom replacement prefixes.
+ *
+ * Returns null if:
+ * - Total atoms not in VB_ALKANE_STEMS
+ * - A heteroatom element is not in VB_HETERO_PREFIX
+ * - The numbering produces no valid descriptor
+ */
+export function nameVonBaeyer(
+  info: BridgedBicyclicInfo,
+  graph: MolGraph,
+  opts: {
+    unsatBonds?: [number, number][];  // ring double bonds for ene suffix
+    subAtoms?: Set<number>;           // ring atoms with substituents (for locant optimization)
+    pcgAtoms?: Set<number>;           // ring atoms carrying PCG
+  } = {},
+): VonBaeyerNaming | null {
+  const { bridgeheads, bridges } = info;
+  const [bh1_orig, bh2_orig] = bridgeheads;
+  const [bA, bB, bC] = bridges;  // a ≥ b ≥ c
+
+  const totalAtoms = bA.length + bB.length + bC.length + 2;
+  const descriptor = `${bA.length}.${bB.length}.${bC.length}`;
+
+  const alkaneBase = VB_ALKANE_STEMS[totalAtoms];
+  if (!alkaneBase) return null; // out of our range
+
+  // Check all heteroatoms in ring can be expressed
+  const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+  for (const a of info.ringAtoms) {
+    const el = atomById.get(a)?.element ?? "C";
+    if (el !== "C" && !(el in VB_HETERO_PREFIX)) return null;
+  }
+
+  // Build ring adjacency for direction checking
+  const ringAdj2 = new Map<number, Set<number>>();
+  for (const a of info.ringAtoms) ringAdj2.set(a, new Set());
+  for (const b of graph.bonds) {
+    if (info.ringAtoms.has(b.from) && info.ringAtoms.has(b.to)) {
+      ringAdj2.get(b.from)!.add(b.to);
+      ringAdj2.get(b.to)!.add(b.from);
+    }
+  }
+  function adjacentInRing(a: number, b: number): boolean {
+    return ringAdj2.get(a)?.has(b) ?? false;
+  }
+
+  /**
+   * Evaluate a locant map: extract locants for heteroatoms, PCG, substituents.
+   * Returns a tuple [heteroLocs, pcgLocs, subLocs, unsatLocs] for comparison.
+   */
+  function evalMap(m: Map<number, number>): {
+    heteroLocs: number[];
+    pcgLocs: number[];
+    subLocs: number[];
+    unsatLocs: number[];
+  } {
+    const heteroLocs: number[] = [];
+    for (const a of info.ringAtoms) {
+      const el = atomById.get(a)?.element ?? "C";
+      if (el !== "C") {
+        const loc = m.get(a);
+        if (loc !== undefined) heteroLocs.push(loc);
+      }
+    }
+    heteroLocs.sort((x, y) => x - y);
+
+    const pcgLocs: number[] = [];
+    if (opts.pcgAtoms) {
+      for (const a of opts.pcgAtoms) {
+        const loc = m.get(a);
+        if (loc !== undefined) pcgLocs.push(loc);
+      }
+      pcgLocs.sort((x, y) => x - y);
+    }
+
+    const subLocs: number[] = [];
+    if (opts.subAtoms) {
+      for (const a of opts.subAtoms) {
+        const loc = m.get(a);
+        if (loc !== undefined) subLocs.push(loc);
+      }
+      subLocs.sort((x, y) => x - y);
+    }
+
+    const unsatLocs: number[] = [];
+    if (opts.unsatBonds) {
+      for (const [a, b] of opts.unsatBonds) {
+        const la = m.get(a) ?? 99;
+        const lb = m.get(b) ?? 99;
+        unsatLocs.push(Math.min(la, lb));
+      }
+      unsatLocs.sort((x, y) => x - y);
+    }
+
+    return { heteroLocs, pcgLocs, subLocs, unsatLocs };
+  }
+
+  function compareLocArr(a: number[], b: number[]): number {
+    const len = Math.min(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+      if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    }
+    return a.length - b.length;
+  }
+
+  // Generate all candidate numberings:
+  //   × 2 start bridgehead choices
+  //   × all permutations of same-length bridges at positions A,B (or B,C if sizes equal)
+  //
+  // For [2.2.1]: bridges a=2,b=2,c=1 — need to try swapping A and B (same size).
+  // For [2.2.2]: bridges a=2,b=2,c=2 — all 3 permutations of (A,B,C) matter.
+  // For [2.2.1]: only a=b case relevant.
+  //
+  // We generate all orderings of the bridges where bridge sizes allow it (equal lengths).
+  // Since c may differ from a,b, we only permute among equal-length bridges.
+
+  function generateBridgeOrderings(): [number[][], number[][], number[][]][] {
+    // Returns list of [bA_candidate, bB_candidate, bC_candidate]
+    const orderings: [number[][], number[][], number[][]][] = [];
+
+    // Collect all possible bridge orderings (a≥b≥c constraint → only swap equal ones)
+    const allBridges = [bA, bB, bC];
+    const sizes = allBridges.map(b => b.length);
+
+    // Generate permutations of indices, keeping the sort order a≥b≥c
+    const perms: number[][] = [];
+    function permute(arr: number[], current: number[]): void {
+      if (arr.length === 0) { perms.push([...current]); return; }
+      for (let i = 0; i < arr.length; i++) {
+        const rest = arr.filter((_, j) => j !== i);
+        permute(rest, [...current, arr[i]]);
+      }
+    }
+    permute([0,1,2], []);
+
+    for (const perm of perms) {
+      // Only keep if sorted descending (a≥b≥c) — i.e., if the sizes are non-increasing
+      const permSizes = perm.map(i => sizes[i]);
+      if (permSizes[0] >= permSizes[1] && permSizes[1] >= permSizes[2]) {
+        orderings.push([allBridges[perm[0]], allBridges[perm[1]], allBridges[perm[2]]]);
+      }
+    }
+
+    return orderings;
+  }
+
+  const bridgeOrderings = generateBridgeOrderings();
+
+  // Build candidates: all start bridgeheads × all bridge orderings
+  const candidates: Map<number, number>[] = [];
+
+  for (const [bA_cand, bB_cand, bC_cand] of bridgeOrderings) {
+    // For each ordering, try both start bridgeheads
+    // We need a modified buildLocantMap that uses specific bridge ordering
+
+    function buildLocantMapWith(
+      startBH: number,
+      otherBH: number,
+      bridgeA: number[],
+      bridgeB: number[],
+      bridgeC: number[],
+    ): Map<number, number> {
+      const m = new Map<number, number>();
+      let locNum = 1;
+
+      m.set(startBH, locNum++);
+      // Bridge A from startBH toward otherBH:
+      // Need to determine traversal direction. If the first atom of bridgeA connects to startBH,
+      // use forward; if the last atom connects to startBH, use reversed.
+      // Check which end of bridgeA is adjacent to startBH in the ring graph.
+      const aStart = bridgeA[0];
+      const aEnd = bridgeA[bridgeA.length - 1];
+      const aPath = adjacentInRing(startBH, aStart) ? bridgeA : [...bridgeA].reverse();
+      for (const a of aPath) m.set(a, locNum++);
+
+      m.set(otherBH, locNum++);
+
+      // Bridge B from otherBH toward startBH
+      if (bridgeB.length > 0) {
+        const bStart = bridgeB[0];
+        const bPath = adjacentInRing(otherBH, bStart) ? bridgeB : [...bridgeB].reverse();
+        for (const b of bPath) m.set(b, locNum++);
+      }
+
+      // Bridge C from otherBH
+      if (bridgeC.length > 0) {
+        const cStart = bridgeC[0];
+        const cPath = adjacentInRing(otherBH, cStart) ? bridgeC : [...bridgeC].reverse();
+        for (const c of cPath) m.set(c, locNum++);
+      }
+
+      return m;
+    }
+
+    candidates.push(buildLocantMapWith(bh1_orig, bh2_orig, bA_cand, bB_cand, bC_cand));
+    candidates.push(buildLocantMapWith(bh2_orig, bh1_orig, bA_cand, bB_cand, bC_cand));
+  }
+
+  // Pick best by: heteroLocs → unsatLocs → pcgLocs → subLocs
+  let bestMap = candidates[0];
+  let bestEval = evalMap(candidates[0]);
+
+  for (const cand of candidates.slice(1)) {
+    const ev = evalMap(cand);
+    let cmp = compareLocArr(ev.heteroLocs, bestEval.heteroLocs);
+    if (cmp === 0) cmp = compareLocArr(ev.unsatLocs, bestEval.unsatLocs);
+    if (cmp === 0) cmp = compareLocArr(ev.pcgLocs, bestEval.pcgLocs);
+    if (cmp === 0) cmp = compareLocArr(ev.subLocs, bestEval.subLocs);
+    if (cmp < 0) { bestMap = cand; bestEval = ev; }
+  }
+
+  // ── Assemble the name ──────────────────────────────────────────────────────
+
+  // Collect heteroatoms sorted by locant (ascending)
+  const heteroEntries: { locant: number; element: string }[] = [];
+  for (const a of info.ringAtoms) {
+    const el = atomById.get(a)?.element ?? "C";
+    if (el !== "C") {
+      const loc = bestMap.get(a)!;
+      heteroEntries.push({ locant: loc, element: el });
+    }
+  }
+  // Sort by IUPAC priority order (O > S > N) then by locant
+  heteroEntries.sort((x, y) => {
+    const px = VB_HETERO_PRIORITY[x.element] ?? 99;
+    const py = VB_HETERO_PRIORITY[y.element] ?? 99;
+    if (px !== py) return px - py;
+    return x.locant - y.locant;
+  });
+
+  // Build heteroatom prefix (e.g. "1-aza", "2-oxa", "1,4-diaza")
+  let heteroPrefix = "";
+  if (heteroEntries.length > 0) {
+    // Group by element
+    const byEl = new Map<string, number[]>();
+    for (const { element, locant } of heteroEntries) {
+      const arr = byEl.get(element) ?? [];
+      arr.push(locant);
+      byEl.set(element, arr);
+    }
+    // Sort groups by element priority
+    const groups = [...byEl.entries()].sort((a, b) =>
+      (VB_HETERO_PRIORITY[a[0]] ?? 99) - (VB_HETERO_PRIORITY[b[0]] ?? 99)
+    );
+    const MULT: Record<number, string> = { 1: "", 2: "di", 3: "tri", 4: "tetra" };
+    const parts: string[] = [];
+    for (const [el, locs] of groups) {
+      locs.sort((x, y) => x - y);
+      const locStr = locs.join(",");
+      const mult = MULT[locs.length] ?? `${locs.length}`;
+      parts.push(`${locStr}-${mult}${VB_HETERO_PREFIX[el]}`);
+    }
+    heteroPrefix = parts.join("") + "bicyclo";
+  } else {
+    heteroPrefix = "bicyclo";
+  }
+
+  const parent = `${heteroPrefix}[${descriptor}]${alkaneBase}`;
+
+  // Unsaturation: ene suffix
+  // (Substituents handled by caller; here we just return the parent + locantOf)
+
+  return {
+    name: parent,
+    locantOf: bestMap,
+    descriptor,
+    parent,
+  };
 }
 
 export function ringSubstituentName(

@@ -4,7 +4,7 @@ import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } fro
 import { nameSubstituent } from "./substituent";
 import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, type SuffixKind, type Sub } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
-import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, nameFusedRing, type RingInfo } from "./ring";
+import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, nameFusedRing, detectBridgedBicyclic, nameVonBaeyer, isAdamantane, type RingInfo } from "./ring";
 
 /**
  * Elements supported by Tier 2+3 (C, H, O, N, F, Cl, Br, I, S for heterocycles).
@@ -963,6 +963,16 @@ function nameFusedRingSystem(
     return nameFusedRingWithSubs(graph, ringSys);
   }
 
+  // Saturation guard: our curated fused table only covers (partially) aromatic systems.
+  // A fully saturated fused ring (e.g. decalin) has no ring double bonds → decline to avoid
+  // false isomorphism matches against aromatic entries (which share the same degree sequence).
+  const hasRingDoubleBond = graph.bonds.some(
+    b => b.order === 2 && ringSys.atoms.has(b.from) && ringSys.atoms.has(b.to)
+  );
+  if (!hasRingDoubleBond) {
+    return { name: null, status: "unsupported", reason: "fused ring system — fully saturated fused ring not in curated table" };
+  }
+
   // Pure fused ring (no exocyclic substituents): look up in curated table
   const naming = nameFusedRing(graph, ringSys, {});
   if (!naming) {
@@ -987,6 +997,14 @@ function nameFusedRingWithSubs(
 ): NameResult {
   const heavy = graph.atoms.filter(a => a.element !== "H");
   const ringAtoms = ringSys.atoms;
+
+  // Saturation guard: curated fused table only covers aromatic/mancude systems.
+  const hasRingDoubleBond = graph.bonds.some(
+    b => b.order === 2 && ringAtoms.has(b.from) && ringAtoms.has(b.to)
+  );
+  if (!hasRingDoubleBond) {
+    return { name: null, status: "unsupported", reason: "fused ring system — fully saturated fused ring not in curated table" };
+  }
 
   // Perceive functional groups
   const perception = perceiveGroups(graph);
@@ -1378,6 +1396,340 @@ function nameMoleculeFusedRingAsSubstituent(
   return { name: nameTxt, status: "named" };
 }
 
+// ── Tier 4 Stage 3: von Baeyer (bridged) ring system naming ────────────────
+
+/**
+ * Name a bridged ring system using von Baeyer nomenclature.
+ *
+ * Handles:
+ *   - bicyclo[a.b.c]alkanes (carbocyclic, fully saturated)
+ *   - heteroatom replacement (aza, oxa, thia) with correct locants
+ *   - unsaturation in the ring (ene suffix)
+ *   - substituents and functional groups on ring atoms
+ *   - adamantane (curated tricyclic)
+ *
+ * Declines anything not confidently handled (tricyclic+, complex subs).
+ *
+ * NO WRONG NAMES: any case we can't name correctly is declined.
+ */
+function nameBridgedRingSystem(
+  graph: MolGraph,
+  ringSys: import("./ring").RingSystemInfo,
+): NameResult {
+  // ── Compute molecular circuit rank for this ring system ───────────────────
+  // Circuit rank = #ring_bonds - #ring_atoms + 1 (for a connected ring system).
+  // A bicyclic compound has circuit rank 2 (regardless of how many SSSR rings RDKit reports).
+  // A tricyclic (adamantane) has circuit rank 3.
+  // This is more reliable than ringSys.ringCount (which can be 3 for bicyclo[2.2.2]octane
+  // if RDKit's SSSR enumerates it that way).
+  const ringBondCount = [...ringSys.bonds].length; // bonds between ring atoms (each stored once)
+  const ringAtomCount = ringSys.atoms.size;
+  const circuitRank = ringBondCount - ringAtomCount + 1;
+
+  // ── Task 3: Curated tricyclics (circuit rank = 3) ─────────────────────────
+  if (circuitRank >= 3) {
+    // Check for adamantane fingerprint
+    if (isAdamantane(ringSys, graph)) {
+      // Adamantane: curated retained name
+      // PubChem IUPAC: "adamantane" (preferred retained name for tricyclo[3.3.1.1^{3,7}]decane)
+      // Verify: no exocyclic substituents or functional groups on ring atoms
+      const heavy = graph.atoms.filter(a => a.element !== "H");
+      const nonRing = heavy.filter(a => !ringSys.atoms.has(a.index));
+      if (nonRing.length === 0) {
+        return { name: "adamantane", status: "named" };
+      }
+      // Substituted adamantane: decline (too complex for confident numbering)
+      return { name: null, status: "unsupported", reason: "substituted adamantane — von Baeyer tricyclic locants not yet supported" };
+    }
+    // General tricyclic+ → decline
+    return { name: null, status: "unsupported", reason: "tricyclic+ bridged system — not yet supported (Stage 3 handles bicyclic + adamantane only)" };
+  }
+
+  // ── Bicyclic: detect bridgeheads and bridges ──────────────────────────────
+  const bicyclic = detectBridgedBicyclic(ringSys, graph);
+  if (!bicyclic) {
+    return { name: null, status: "unsupported", reason: "bridged ring system — could not identify bicyclic bridge structure" };
+  }
+
+  // ── Element check: only C, N, O, S in ring ────────────────────────────────
+  const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+  const VB_RING_ELEMENTS = new Set(["C", "N", "O", "S"]);
+  const VB_EXO_ELEMENTS = new Set(["C", "H", "N", "O", "S", "F", "Cl", "Br", "I"]);
+  for (const a of graph.atoms) {
+    if (!VB_EXO_ELEMENTS.has(a.element)) {
+      return { name: null, status: "unsupported", reason: `bridged ring contains ${a.element} — not supported` };
+    }
+    if (ringSys.atoms.has(a.index) && !VB_RING_ELEMENTS.has(a.element)) {
+      return { name: null, status: "unsupported", reason: `ring atom ${a.element} in bridged system — not supported` };
+    }
+  }
+
+  const heavy = graph.atoms.filter(a => a.element !== "H");
+  const ringAtoms = ringSys.atoms;
+
+  // ── Perceive functional groups on the bridged system ──────────────────────
+  const perception = perceiveGroups(graph);
+  if (perception.unsupported) {
+    return { name: null, status: "unsupported", reason: perception.unsupported };
+  }
+
+  // Filter groups: exclude those entirely inside the ring (ring heteroatoms)
+  const allGroups = perception.groups.filter(g => {
+    const allInRing = g.atoms.every(a => ringAtoms.has(a));
+    return !allInRing;
+  }).filter(g => {
+    if (g.kind === "ether" && ringAtoms.has(g.carbon) && ringAtoms.has(g.atoms[0])) return false;
+    return true;
+  });
+
+  // Verify all heteroatoms are accounted for (ring heteroatoms + functional groups)
+  {
+    const groupAtomSet = new Set<number>();
+    for (const g of allGroups) for (const a of g.atoms) groupAtomSet.add(a);
+    for (const a of graph.atoms) {
+      if (a.element === "C" || a.element === "H") continue;
+      if (ringAtoms.has(a.index)) continue; // ring heteroatom → expressed via replacement prefix
+      if (!groupAtomSet.has(a.index)) {
+        const eName = { O: "oxygen", N: "nitrogen", S: "sulfur", F: "fluorine", Cl: "chlorine", Br: "bromine", I: "iodine" }[a.element] ?? a.element;
+        return { name: null, status: "unsupported", reason: `bridged ring: contains unclassified ${eName}` };
+      }
+    }
+  }
+
+  const pcgKind = principalKind(allGroups);
+
+  // Decline two-part naming (ester, acyl halide, anhydride) — too complex
+  if (allGroups.some(g => isTwoPart(g.kind))) {
+    return { name: null, status: "unsupported", reason: "acid derivative on bridged ring — not yet supported" };
+  }
+
+  // ── Find ring double bonds ─────────────────────────────────────────────────
+  const unsatBonds: [number, number][] = [];
+  for (const b of graph.bonds) {
+    if (b.order === 2 && ringAtoms.has(b.from) && ringAtoms.has(b.to)) {
+      unsatBonds.push([b.from, b.to]);
+    }
+  }
+
+  // ── Identify PCG and substituent ring atoms ────────────────────────────────
+  const pcgGroups = pcgKind ? allGroups.filter(g => g.kind === pcgKind) : [];
+  const pcgRingAtoms = new Set<number>();
+  const pcgExoCarbons = new Set<number>();
+  const exoPcgToRingAtom = new Map<number, number>();
+
+  for (const g of pcgGroups) {
+    if (ringAtoms.has(g.carbon)) {
+      pcgRingAtoms.add(g.carbon);
+    } else {
+      // Check if exocyclic C is directly attached to ring
+      for (const b of graph.bonds) {
+        if (b.from === g.carbon && ringAtoms.has(b.to)) {
+          pcgExoCarbons.add(g.carbon);
+          exoPcgToRingAtom.set(g.carbon, b.to);
+          pcgRingAtoms.add(b.to);
+          break;
+        }
+        if (b.to === g.carbon && ringAtoms.has(b.from)) {
+          pcgExoCarbons.add(g.carbon);
+          exoPcgToRingAtom.set(g.carbon, b.from);
+          pcgRingAtoms.add(b.from);
+          break;
+        }
+      }
+    }
+  }
+
+  // Collect substituent atoms on ring atoms (for locant optimization)
+  const subMap = ringSubstituents(graph, ringAtoms);
+  const subRingAtoms = new Set<number>();
+  for (const [ringAtom] of subMap) subRingAtoms.add(ringAtom);
+
+  // Build exo carbon graph (non-ring carbons only)
+  const exoCarbonGraph = buildCarbonGraph(graph);
+  for (const idx of ringAtoms) {
+    exoCarbonGraph.carbons = exoCarbonGraph.carbons.filter(c => c !== idx);
+    exoCarbonGraph.adj.delete(idx);
+    for (const [, list] of exoCarbonGraph.adj) {
+      const i = list.indexOf(idx);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+
+  // ── Compute von Baeyer numbering ──────────────────────────────────────────
+  const vbNaming = nameVonBaeyer(bicyclic, graph, {
+    unsatBonds: unsatBonds.length > 0 ? unsatBonds : undefined,
+    pcgAtoms: pcgRingAtoms.size > 0 ? pcgRingAtoms : undefined,
+    subAtoms: subRingAtoms.size > 0 ? subRingAtoms : undefined,
+  });
+  if (!vbNaming) {
+    return { name: null, status: "unsupported", reason: "bridged ring system — ring atom count out of range for von Baeyer naming" };
+  }
+
+  const { locantOf, parent: vbParent } = vbNaming;
+
+  // ── Assemble substituents ─────────────────────────────────────────────────
+  const groupAtomSet = new Set<number>();
+  for (const g of allGroups) for (const a of g.atoms) groupAtomSet.add(a);
+
+  const ringNameSubs: { locant: number; name: string }[] = [];
+  const accountedAtoms = new Set<number>([...ringAtoms]);
+
+  // Non-PCG prefix groups on ring atoms
+  const nonPcgGroups = pcgKind
+    ? allGroups.filter(g => SENIORITY[g.kind] < SENIORITY[pcgKind] || SENIORITY[g.kind] === 0)
+    : allGroups;
+
+  for (const g of nonPcgGroups) {
+    if (ringAtoms.has(g.carbon)) {
+      const loc = locantOf.get(g.carbon);
+      if (loc !== undefined) {
+        ringNameSubs.push({ locant: loc, name: prefixForm(g) });
+        for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+  }
+
+  // Halogens and alkyl substituents on ring atoms
+  for (const [ringAtom, exoNbrs] of subMap) {
+    for (const exoNbr of exoNbrs) {
+      if (groupAtomSet.has(exoNbr)) continue;
+      if (pcgExoCarbons.has(exoNbr)) continue;
+      if (allGroups.some(g => g.carbon === exoNbr)) continue;
+
+      const loc = locantOf.get(ringAtom);
+      if (loc === undefined) continue;
+
+      const atom = atomById.get(exoNbr);
+      if (!atom) continue;
+
+      if (["F", "Cl", "Br", "I"].includes(atom.element)) {
+        const halPfx: Record<string, string> = { F: "fluoro", Cl: "chloro", Br: "bromo", I: "iodo" };
+        ringNameSubs.push({ locant: loc, name: halPfx[atom.element] });
+        accountedAtoms.add(exoNbr);
+        continue;
+      }
+
+      if (atom.element === "C") {
+        const subName = nameSubstituent(exoCarbonGraph, exoNbr, ringAtom);
+        ringNameSubs.push({ locant: loc, name: subName });
+        const subAtomSet = collectSubtreeAtoms(exoCarbonGraph, exoNbr, ringAtom);
+        for (const a of subAtomSet) accountedAtoms.add(a);
+        continue;
+      }
+
+      return { name: null, status: "unsupported", reason: "bridged ring: substituent not expressible" };
+    }
+  }
+
+  // ── Suffix: PCG on ring atom ───────────────────────────────────────────────
+  let suffix: import("./assemble").SuffixSpec | undefined;
+  if (pcgKind && pcgRingAtoms.size > 0 && !pcgExoCarbons.size) {
+    const pcgLocs = pcgGroups
+      .filter(g => ringAtoms.has(g.carbon))
+      .map(g => locantOf.get(g.carbon)!)
+      .filter(l => l !== undefined)
+      .sort((a, b) => a - b);
+    if (pcgLocs.length > 0) {
+      suffix = { kind: toSuffixKind(pcgKind), locants: pcgLocs };
+      for (const g of pcgGroups) {
+        if (ringAtoms.has(g.carbon)) for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+  }
+
+  // ── Added-carbon PCG (exocyclic) ───────────────────────────────────────────
+  let addedCarbon: { kind: import("./assemble").AddedCarbonSuffix; locants: number[] } | undefined;
+  if (pcgKind && pcgExoCarbons.size > 0) {
+    const addedKind = pcgKindToAddedCarbon(pcgKind);
+    if (!addedKind) {
+      return { name: null, status: "unsupported", reason: `${pcgKind} not expressible as added-carbon on bridged ring` };
+    }
+    const locs: number[] = [];
+    for (const [excC, ringAtom] of exoPcgToRingAtom) {
+      const loc = locantOf.get(ringAtom);
+      if (loc !== undefined) locs.push(loc);
+      accountedAtoms.add(excC);
+      for (const g of pcgGroups) {
+        if (g.carbon === excC) for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+    locs.sort((a, b) => a - b);
+    addedCarbon = { kind: addedKind, locants: locs };
+  }
+
+  // ── Completeness guard ─────────────────────────────────────────────────────
+  if (heavy.some(a => !accountedAtoms.has(a.index))) {
+    return { name: null, status: "unsupported", reason: "bridged ring: unaccounted atoms — substituent not yet supported" };
+  }
+
+  // ── Assemble ene suffix for ring double bonds ──────────────────────────────
+  // von Baeyer ring unsaturation: "bicyclo[2.2.1]hept-2-ene"
+  // Determine the ene suffix: find double-bond locants and embed them in the name
+  let finalName: string;
+  if (unsatBonds.length > 0 && !suffix && !addedCarbon) {
+    // Compute ene locants (lower of the two endpoints)
+    const eneLocs = unsatBonds
+      .map(([a, b]) => Math.min(locantOf.get(a) ?? 99, locantOf.get(b) ?? 99))
+      .sort((x, y) => x - y);
+    // Build name: bicyclo[2.2.1]heptane → bicyclo[2.2.1]hept-2-ene
+    const alkaneBase = vbParent; // ends with alkane name
+    // Strip "ane" → add "-loc-ene"
+    if (alkaneBase.endsWith("ane")) {
+      const stem = alkaneBase.slice(0, -3); // drop "ane"
+      const eneSuffix = eneLocs.length === 1
+        ? `-${eneLocs[0]}-ene`
+        : `a-${eneLocs.join(",")}-diene`;
+      finalName = buildVbPrefix(ringNameSubs) + stem + eneSuffix;
+    } else {
+      finalName = buildVbPrefix(ringNameSubs) + alkaneBase;
+    }
+  } else if (suffix || addedCarbon) {
+    // Use assembleRingName for suffix/added-carbon
+    finalName = assembleRingName({ parent: vbParent, subs: ringNameSubs, suffix, addedCarbon });
+  } else {
+    finalName = buildVbPrefix(ringNameSubs) + vbParent;
+  }
+
+  return { name: finalName, status: "named" };
+}
+
+/**
+ * Build a substituent prefix string for von Baeyer names.
+ * Mirrors buildLactamPrefix but for bicyclo parents.
+ * Returns e.g. "2-methyl-" or "2,3-dimethyl-" (with trailing hyphen before parent).
+ */
+function buildVbPrefix(subs: { locant: number; name: string }[]): string {
+  if (subs.length === 0) return "";
+
+  const groups = new Map<string, number[]>();
+  for (const s of subs) {
+    const arr = groups.get(s.name) ?? [];
+    arr.push(s.locant);
+    groups.set(s.name, arr);
+  }
+
+  const alphaKey = (name: string) =>
+    name.replace(/^\((.*)\)$/, "$1").replace(/^[\d,()\-\s]+/, "");
+
+  const parts = [...groups.entries()].map(([name, locants]) => ({
+    name,
+    locants: locants.sort((a, b) => a - b),
+  }));
+  parts.sort((a, b) => {
+    const ka = alphaKey(a.name), kb = alphaKey(b.name);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  const multPfx = (n: number) => ["", "", "di", "tri", "tetra"][n] ?? `${n}-`;
+  const isComplex = (n: string) => /\d/.test(n);
+  const disp = (n: string) => isComplex(n) ? `(${n})` : n;
+
+  const segments = parts.map(p =>
+    `${p.locants.join(",")}-${multPfx(p.locants.length)}${disp(p.name)}`
+  );
+  return segments.join("-") + "-";
+}
+
 /**
  * Name a single-ring molecule. Called by nameMolecule when hasRing() is true.
  */
@@ -1395,7 +1747,7 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     return { name: null, status: "unsupported", reason: "spiro ring system — Tier 4 (Stage 4)" };
   }
   if (ringSys.kind === "bridged") {
-    return { name: null, status: "unsupported", reason: "bridged ring system — Tier 4 (Stage 3, von Baeyer)" };
+    return nameBridgedRingSystem(graph, ringSys);
   }
   if (ringSys.kind === "assembly") {
     return { name: null, status: "unsupported", reason: "ring assembly (disjoint rings) — Tier 4 (Stage 4)" };
