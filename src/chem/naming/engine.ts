@@ -4,7 +4,7 @@ import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } fro
 import { nameSubstituent } from "./substituent";
 import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, type SuffixKind, type Sub } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
-import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, nameFusedRing, detectBridgedBicyclic, nameVonBaeyer, isAdamantane, type RingInfo } from "./ring";
+import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, nameFusedRing, detectBridgedBicyclic, nameVonBaeyer, isAdamantane, detectMonoSpiro, nameSpiro, type RingInfo } from "./ring";
 
 /**
  * Elements supported by Tier 2+3 (C, H, O, N, F, Cl, Br, I, S for heterocycles).
@@ -1396,6 +1396,267 @@ function nameMoleculeFusedRingAsSubstituent(
   return { name: nameTxt, status: "named" };
 }
 
+// ── Tier 4 Stage 4: spiro ring system naming ───────────────────────────────
+
+/**
+ * Name a monospiro ring system.
+ *
+ * Handles:
+ *   - carbocyclic spiro (spiro[a.b]alkane)
+ *   - heteroatom replacement spiro (1-oxa, 1,4-dioxa, 1-aza, etc.)
+ *   - unsaturation in ring (ene suffix)
+ *   - substituents and functional groups on ring atoms
+ *
+ * Declines:
+ *   - dispiro / polyspiro (more than one spiro atom)
+ *   - anything that can't be named confidently
+ *
+ * NO WRONG NAMES: any case that can't be named correctly is DECLINED.
+ */
+function nameSpiroRingSystem(
+  graph: MolGraph,
+  ringSys: import("./ring").RingSystemInfo,
+): NameResult {
+  // ── Element check ─────────────────────────────────────────────────────────
+  const SPIRO_RING_ELEMENTS = new Set(["C", "N", "O", "S"]);
+  const SPIRO_EXO_ELEMENTS = new Set(["C", "H", "N", "O", "S", "F", "Cl", "Br", "I"]);
+  for (const a of graph.atoms) {
+    if (!SPIRO_EXO_ELEMENTS.has(a.element)) {
+      return { name: null, status: "unsupported", reason: `spiro ring contains ${a.element} — not supported` };
+    }
+    if (ringSys.atoms.has(a.index) && !SPIRO_RING_ELEMENTS.has(a.element)) {
+      return { name: null, status: "unsupported", reason: `ring atom ${a.element} in spiro system — not supported` };
+    }
+  }
+
+  // ── Detect monospiro structure ────────────────────────────────────────────
+  const detected = detectMonoSpiro(ringSys, graph);
+  if (!detected) {
+    // dispiro or polyspiro → DECLINE
+    return { name: null, status: "unsupported", reason: "dispiro/polyspiro ring system — Tier 4 (later stage)" };
+  }
+
+  const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+  const heavy = graph.atoms.filter(a => a.element !== "H");
+  const ringAtoms = ringSys.atoms;
+
+  // ── Perceive functional groups ────────────────────────────────────────────
+  const perception = perceiveGroups(graph);
+  if (perception.unsupported) {
+    return { name: null, status: "unsupported", reason: perception.unsupported };
+  }
+
+  // Filter groups: exclude those entirely inside the ring (ring heteroatoms)
+  const allGroups = perception.groups.filter(g => {
+    const allInRing = g.atoms.every(a => ringAtoms.has(a));
+    return !allInRing;
+  }).filter(g => {
+    if (g.kind === "ether" && ringAtoms.has(g.carbon) && ringAtoms.has(g.atoms[0])) return false;
+    return true;
+  });
+
+  // Verify all heteroatoms are accounted for
+  {
+    const groupAtomSet = new Set<number>();
+    for (const g of allGroups) for (const a of g.atoms) groupAtomSet.add(a);
+    for (const a of graph.atoms) {
+      if (a.element === "C" || a.element === "H") continue;
+      if (ringAtoms.has(a.index)) continue; // ring heteroatom → expressed via replacement prefix
+      if (!groupAtomSet.has(a.index)) {
+        const eName = { O: "oxygen", N: "nitrogen", S: "sulfur", F: "fluorine", Cl: "chlorine", Br: "bromine", I: "iodine" }[a.element] ?? a.element;
+        return { name: null, status: "unsupported", reason: `spiro ring: contains unclassified ${eName}` };
+      }
+    }
+  }
+
+  const pcgKind = principalKind(allGroups);
+
+  // Decline two-part naming (ester, acyl halide, anhydride) on spiro rings
+  if (allGroups.some(g => isTwoPart(g.kind))) {
+    return { name: null, status: "unsupported", reason: "acid derivative on spiro ring — not yet supported" };
+  }
+
+  // ── Find ring double bonds ─────────────────────────────────────────────────
+  const unsatBonds: [number, number][] = [];
+  for (const b of graph.bonds) {
+    if (b.order === 2 && ringAtoms.has(b.from) && ringAtoms.has(b.to)) {
+      unsatBonds.push([b.from, b.to]);
+    }
+  }
+
+  // ── Identify PCG and substituent ring atoms ────────────────────────────────
+  const pcgGroups = pcgKind ? allGroups.filter(g => g.kind === pcgKind) : [];
+  const pcgRingAtoms = new Set<number>();
+  const pcgExoCarbons = new Set<number>();
+  const exoPcgToRingAtom = new Map<number, number>();
+
+  for (const g of pcgGroups) {
+    if (ringAtoms.has(g.carbon)) {
+      pcgRingAtoms.add(g.carbon);
+    } else {
+      for (const b of graph.bonds) {
+        if (b.from === g.carbon && ringAtoms.has(b.to)) {
+          pcgExoCarbons.add(g.carbon);
+          exoPcgToRingAtom.set(g.carbon, b.to);
+          pcgRingAtoms.add(b.to);
+          break;
+        }
+        if (b.to === g.carbon && ringAtoms.has(b.from)) {
+          pcgExoCarbons.add(g.carbon);
+          exoPcgToRingAtom.set(g.carbon, b.from);
+          pcgRingAtoms.add(b.from);
+          break;
+        }
+      }
+    }
+  }
+
+  const subMap = ringSubstituents(graph, ringAtoms);
+  const subRingAtoms = new Set<number>();
+  for (const [ringAtom] of subMap) subRingAtoms.add(ringAtom);
+
+  // Build exo carbon graph (non-ring carbons only)
+  const exoCarbonGraph = buildCarbonGraph(graph);
+  for (const idx of ringAtoms) {
+    exoCarbonGraph.carbons = exoCarbonGraph.carbons.filter(c => c !== idx);
+    exoCarbonGraph.adj.delete(idx);
+    for (const [, list] of exoCarbonGraph.adj) {
+      const i = list.indexOf(idx);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+
+  // ── Compute spiro numbering ───────────────────────────────────────────────
+  const spiroNaming = nameSpiro(ringSys, graph, {
+    unsatBonds: unsatBonds.length > 0 ? unsatBonds : undefined,
+    pcgAtoms: pcgRingAtoms.size > 0 ? pcgRingAtoms : undefined,
+    subAtoms: subRingAtoms.size > 0 ? subRingAtoms : undefined,
+  });
+  if (!spiroNaming) {
+    return { name: null, status: "unsupported", reason: "spiro ring system — could not compute numbering (total atoms out of range or heteroatom unsupported)" };
+  }
+
+  const { locantOf, name: spiroParent } = spiroNaming;
+
+  // ── Assemble substituents ─────────────────────────────────────────────────
+  const groupAtomSet = new Set<number>();
+  for (const g of allGroups) for (const a of g.atoms) groupAtomSet.add(a);
+
+  const ringNameSubs: { locant: number; name: string }[] = [];
+  const accountedAtoms = new Set<number>([...ringAtoms]);
+
+  // Non-PCG prefix groups on ring atoms
+  const nonPcgGroups = pcgKind
+    ? allGroups.filter(g => SENIORITY[g.kind] < SENIORITY[pcgKind] || SENIORITY[g.kind] === 0)
+    : allGroups;
+
+  for (const g of nonPcgGroups) {
+    if (ringAtoms.has(g.carbon)) {
+      const loc = locantOf.get(g.carbon);
+      if (loc !== undefined) {
+        ringNameSubs.push({ locant: loc, name: prefixForm(g) });
+        for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+  }
+
+  // Halogens and alkyl substituents on ring atoms
+  for (const [ringAtom, exoNbrs] of subMap) {
+    for (const exoNbr of exoNbrs) {
+      if (groupAtomSet.has(exoNbr)) continue;
+      if (pcgExoCarbons.has(exoNbr)) continue;
+      if (allGroups.some(g => g.carbon === exoNbr)) continue;
+
+      const loc = locantOf.get(ringAtom);
+      if (loc === undefined) continue;
+
+      const atom = atomById.get(exoNbr);
+      if (!atom) continue;
+
+      if (["F", "Cl", "Br", "I"].includes(atom.element)) {
+        const halPfx: Record<string, string> = { F: "fluoro", Cl: "chloro", Br: "bromo", I: "iodo" };
+        ringNameSubs.push({ locant: loc, name: halPfx[atom.element] });
+        accountedAtoms.add(exoNbr);
+        continue;
+      }
+
+      if (atom.element === "C") {
+        const subName = nameSubstituent(exoCarbonGraph, exoNbr, ringAtom);
+        ringNameSubs.push({ locant: loc, name: subName });
+        const subAtomSet = collectSubtreeAtoms(exoCarbonGraph, exoNbr, ringAtom);
+        for (const a of subAtomSet) accountedAtoms.add(a);
+        continue;
+      }
+
+      return { name: null, status: "unsupported", reason: "spiro ring: substituent not expressible" };
+    }
+  }
+
+  // ── Suffix: PCG on ring atom ───────────────────────────────────────────────
+  let suffix: import("./assemble").SuffixSpec | undefined;
+  if (pcgKind && pcgRingAtoms.size > 0 && !pcgExoCarbons.size) {
+    const pcgLocs = pcgGroups
+      .filter(g => ringAtoms.has(g.carbon))
+      .map(g => locantOf.get(g.carbon)!)
+      .filter(l => l !== undefined)
+      .sort((a, b) => a - b);
+    if (pcgLocs.length > 0) {
+      suffix = { kind: toSuffixKind(pcgKind), locants: pcgLocs };
+      for (const g of pcgGroups) {
+        if (ringAtoms.has(g.carbon)) for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+  }
+
+  // ── Added-carbon PCG (exocyclic) ───────────────────────────────────────────
+  let addedCarbon: { kind: import("./assemble").AddedCarbonSuffix; locants: number[] } | undefined;
+  if (pcgKind && pcgExoCarbons.size > 0) {
+    const addedKind = pcgKindToAddedCarbon(pcgKind);
+    if (!addedKind) {
+      return { name: null, status: "unsupported", reason: `${pcgKind} not expressible as added-carbon on spiro ring` };
+    }
+    const locs: number[] = [];
+    for (const [excC, ringAtom] of exoPcgToRingAtom) {
+      const loc = locantOf.get(ringAtom);
+      if (loc !== undefined) locs.push(loc);
+      accountedAtoms.add(excC);
+      for (const g of pcgGroups) {
+        if (g.carbon === excC) for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+    locs.sort((a, b) => a - b);
+    addedCarbon = { kind: addedKind, locants: locs };
+  }
+
+  // ── Completeness guard ─────────────────────────────────────────────────────
+  if (heavy.some(a => !accountedAtoms.has(a.index))) {
+    return { name: null, status: "unsupported", reason: "spiro ring: unaccounted atoms — substituent not yet supported" };
+  }
+
+  // ── Assemble ene suffix for ring double bonds ──────────────────────────────
+  let finalName: string;
+  if (unsatBonds.length > 0 && !suffix && !addedCarbon) {
+    const eneLocs = unsatBonds
+      .map(([at1, at2]) => Math.min(locantOf.get(at1) ?? 99, locantOf.get(at2) ?? 99))
+      .sort((x, y) => x - y);
+    if (spiroParent.endsWith("ane")) {
+      const stem = spiroParent.slice(0, -3);
+      const eneSuffix = eneLocs.length === 1
+        ? `-${eneLocs[0]}-ene`
+        : `a-${eneLocs.join(",")}-diene`;
+      finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), stem + eneSuffix);
+    } else {
+      finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), spiroParent);
+    }
+  } else if (suffix || addedCarbon) {
+    finalName = assembleRingName({ parent: spiroParent, subs: ringNameSubs, suffix, addedCarbon });
+  } else {
+    finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), spiroParent);
+  }
+
+  return { name: finalName, status: "named" };
+}
+
 // ── Tier 4 Stage 3: von Baeyer (bridged) ring system naming ────────────────
 
 /**
@@ -1755,7 +2016,7 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     return nameFusedRingSystem(graph, ringSys);
   }
   if (ringSys.kind === "spiro") {
-    return { name: null, status: "unsupported", reason: "spiro ring system — Tier 4 (Stage 4)" };
+    return nameSpiroRingSystem(graph, ringSys);
   }
   if (ringSys.kind === "bridged") {
     return nameBridgedRingSystem(graph, ringSys);

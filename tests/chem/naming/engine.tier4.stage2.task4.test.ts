@@ -149,11 +149,12 @@ describe("Task 4 – roadmap: remaining unsupported → decline with reason", ()
     expect(r?.status).toBe("unsupported");
   });
 
-  it("spiro ring → spiro decline", () => {
+  it("spiro ring → now named (Stage 4 spiro implemented)", () => {
+    // Stage 4 implemented monospiro naming; spiro[5.5]undecane is now supported.
     const g = graphFromSmiles("C1CCC2(CC1)CCCCC2");
     const r = g ? nameMolecule(g) : null;
-    expect(r?.status).toBe("unsupported");
-    expect(r?.reason).toMatch(/spiro/i);
+    expect(r?.status).toBe("named");
+    expect(r?.name).toBe("spiro[5.5]undecane");
   });
 
   it("ring assembly (biphenyl) → assembly decline", () => {

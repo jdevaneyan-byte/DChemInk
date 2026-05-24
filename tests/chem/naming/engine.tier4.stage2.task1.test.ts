@@ -89,9 +89,9 @@ describe("engine routing – Stage 0 stubs", () => {
     expect(status("c1ccc2ccccc2c1")).toBe("named");
   });
 
-  it("spiro → unsupported, reason mentions spiro", () => {
-    expect(status("C1CCC2(CC1)CCCCC2")).toBe("unsupported");
-    expect(reason("C1CCC2(CC1)CCCCC2")).toMatch(/spiro/i);
+  it("spiro → now named (Stage 4 spiro implemented)", () => {
+    // Stage 4 implemented monospiro naming; spiro[5.5]undecane is now supported.
+    expect(status("C1CCC2(CC1)CCCCC2")).toBe("named");
   });
 
   it("norbornane → now named (Stage 3 bridged implemented)", () => {

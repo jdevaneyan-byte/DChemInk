@@ -2271,6 +2271,401 @@ export function nameVonBaeyer(
   };
 }
 
+// ────────────────────────────────────────────────────────────────────────────────
+// T4 Stage 4: monospiro ring system naming
+// ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Alkane stem names for spiro nomenclature.
+ * spiro[a.b]<stem>ane where stem = parent for (a+b+1) atoms total.
+ */
+const SPIRO_ALKANE_STEMS: Record<number, string> = {
+  5:  "pentane",
+  6:  "hexane",
+  7:  "heptane",
+  8:  "octane",
+  9:  "nonane",
+  10: "decane",
+  11: "undecane",
+  12: "dodecane",
+};
+
+/**
+ * Heteroatom replacement prefix for spiro nomenclature (same as von Baeyer).
+ */
+const SPIRO_HETERO_PREFIX: Record<string, string> = {
+  O: "oxa",
+  S: "thia",
+  N: "aza",
+};
+
+const SPIRO_HETERO_PRIORITY: Record<string, number> = {
+  O: 1, S: 2, N: 3,
+};
+
+export interface SpiroNaming {
+  /** Full IUPAC name (e.g. "spiro[4.5]decane", "1,4-dioxaspiro[4.5]decane") */
+  name: string;
+  /** Map from ring atom index → IUPAC locant (1-based) */
+  locantOf: Map<number, number>;
+  /** Descriptor string, e.g. "4.5" */
+  descriptor: string;
+  /** The spiro atom index */
+  spiroAtom: number;
+}
+
+/**
+ * Detect the monospiro system in a ring system classified as "spiro".
+ *
+ * A monospiro system has exactly ONE atom shared between exactly two rings.
+ * That atom has ring-internal degree 4 (bonded to 2 atoms in each ring).
+ *
+ * Returns:
+ *   - spiroAtom: the index of the spiro atom
+ *   - ring1, ring2: the two rings as arrays of atom indices (including the spiro atom)
+ *   - null if the system is not a simple monospiro (e.g. dispiro, polyspiro)
+ */
+export function detectMonoSpiro(
+  ringSys: RingSystemInfo,
+  graph: MolGraph,
+): { spiroAtom: number; ring1: number[]; ring2: number[] } | null {
+  // Build ring-internal degree for all ring atoms
+  const ringDeg = new Map<number, number>();
+  for (const a of ringSys.atoms) ringDeg.set(a, 0);
+  for (const b of graph.bonds) {
+    if (ringSys.atoms.has(b.from) && ringSys.atoms.has(b.to)) {
+      ringDeg.set(b.from, (ringDeg.get(b.from) ?? 0) + 1);
+      ringDeg.set(b.to, (ringDeg.get(b.to) ?? 0) + 1);
+    }
+  }
+
+  // Find atoms with ring degree 4 (the spiro atoms)
+  const spiroCandidates: number[] = [];
+  for (const [atom, deg] of ringDeg) {
+    if (deg === 4) spiroCandidates.push(atom);
+  }
+
+  // Monospiro: exactly one spiro atom
+  if (spiroCandidates.length !== 1) return null;
+  const spiroAtom = spiroCandidates[0];
+
+  // Build ring adjacency restricted to ring atoms
+  const adj = new Map<number, number[]>();
+  for (const a of ringSys.atoms) adj.set(a, []);
+  for (const b of graph.bonds) {
+    if (ringSys.atoms.has(b.from) && ringSys.atoms.has(b.to)) {
+      adj.get(b.from)!.push(b.to);
+      adj.get(b.to)!.push(b.from);
+    }
+  }
+
+  // The spiro atom has 4 ring neighbors; these belong to two distinct rings.
+  const spiroNeighbors = adj.get(spiroAtom) ?? [];
+  if (spiroNeighbors.length !== 4) return null;
+
+  // Partition spiro neighbors into two ring components by checking reachability
+  // without crossing the spiro atom.
+  const visited = new Set<number>([spiroAtom]);
+  const component1 = new Set<number>();
+  const q1 = [spiroNeighbors[0]];
+  while (q1.length > 0) {
+    const cur = q1.shift()!;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    component1.add(cur);
+    for (const nbr of adj.get(cur) ?? []) {
+      if (!visited.has(nbr)) q1.push(nbr);
+    }
+  }
+
+  const component2 = new Set<number>();
+  for (const a of ringSys.atoms) {
+    if (a !== spiroAtom && !component1.has(a)) component2.add(a);
+  }
+
+  // Verify: spiroNeighbors split cleanly between the two components
+  const n1 = spiroNeighbors.filter(n => component1.has(n));
+  const n2 = spiroNeighbors.filter(n => component2.has(n));
+  if (n1.length !== 2 || n2.length !== 2) return null;
+
+  // Build each ring as [spiroAtom, ...component atoms in cyclic order]
+  // Walk each component as a simple cycle starting from spiroAtom
+  function walkRing(start: number, comp: Set<number>): number[] | null {
+    const ringAdj = new Map<number, number[]>();
+    ringAdj.set(start, [...comp].filter(a => (adj.get(start) ?? []).includes(a)));
+    for (const a of comp) {
+      ringAdj.set(a, (adj.get(a) ?? []).filter(b => b === start || comp.has(b)));
+    }
+    // Walk the cycle
+    const path: number[] = [start];
+    const seen = new Set<number>([start]);
+    let cur = start;
+    let prev = -1;
+    const total = comp.size + 1; // include spiro atom
+    for (let step = 0; step < total - 1; step++) {
+      const nbrs = (ringAdj.get(cur) ?? []).filter(n => n !== prev && !seen.has(n));
+      if (nbrs.length === 0) return null;
+      // For start, we need to pick one direction (either neighbor of start in comp)
+      const next = nbrs[0];
+      path.push(next);
+      seen.add(next);
+      prev = cur;
+      cur = next;
+    }
+    // Verify closure back to start
+    if (!(ringAdj.get(cur) ?? []).includes(start)) return null;
+    return path;
+  }
+
+  const r1 = walkRing(spiroAtom, component1);
+  const r2 = walkRing(spiroAtom, component2);
+  if (!r1 || !r2) return null;
+
+  return { spiroAtom, ring1: r1, ring2: r2 };
+}
+
+/**
+ * Name a monospiro ring system.
+ *
+ * Algorithm:
+ * 1. Detect monospiro atom and two rings.
+ * 2. Determine a (smaller ring's non-spiro count) and b (larger ring's non-spiro count).
+ * 3. Enumerate candidate numberings: start at each atom adjacent to spiro in each ring,
+ *    go around the smaller ring first, then the larger ring. Try both directions.
+ * 4. Select the numbering that gives the lowest locants to: heteroatoms, then PCG, then subs.
+ * 5. Assemble: heteroPrefix + "spiro[a.b]" + alkane stem.
+ *
+ * Returns null if:
+ * - Not a simple monospiro
+ * - Total atoms not in SPIRO_ALKANE_STEMS
+ * - A heteroatom element is not in SPIRO_HETERO_PREFIX
+ * - Could not build a valid numbering
+ */
+export function nameSpiro(
+  ringSys: RingSystemInfo,
+  graph: MolGraph,
+  opts: {
+    pcgAtoms?: Set<number>;     // ring atoms carrying PCG
+    subAtoms?: Set<number>;     // ring atoms with substituents
+    unsatBonds?: [number, number][];
+  } = {},
+): SpiroNaming | null {
+  const detected = detectMonoSpiro(ringSys, graph);
+  if (!detected) return null;
+
+  const { spiroAtom, ring1, ring2 } = detected;
+
+  // ring1 and ring2 each include the spiro atom.
+  // Non-spiro atom count for each ring:
+  const size1 = ring1.length - 1; // non-spiro atoms in ring1
+  const size2 = ring2.length - 1; // non-spiro atoms in ring2
+
+  // Determine "smaller" and "larger" (a ≤ b per IUPAC convention)
+  const a = Math.min(size1, size2);
+  const b = Math.max(size1, size2);
+  const totalAtoms = a + b + 1;
+
+  const alkaneBase = SPIRO_ALKANE_STEMS[totalAtoms];
+  if (!alkaneBase) return null; // out of range
+
+  // Check all ring heteroatoms can be expressed
+  const atomById = new Map(graph.atoms.map(at => [at.index, at]));
+  for (const at of ringSys.atoms) {
+    const el = atomById.get(at)?.element ?? "C";
+    if (el !== "C" && !(el in SPIRO_HETERO_PREFIX)) return null;
+  }
+
+  // Assign "smallerRing" and "largerRing" based on size
+  const smallerRing = (size1 <= size2) ? ring1 : ring2;
+  const largerRing  = (size1 <= size2) ? ring2 : ring1;
+
+  // Non-spiro atoms of each ring (in cyclic order as returned by walkRing)
+  // smallerRing = [spiroAtom, s1, s2, ..., sa]  (a non-spiro atoms)
+  // largerRing  = [spiroAtom, l1, l2, ..., lb]  (b non-spiro atoms)
+  const smallerNonSpiro = smallerRing.slice(1); // a atoms
+  const largerNonSpiro  = largerRing.slice(1);  // b atoms
+
+  /**
+   * Build a locant map from a candidate numbering specification:
+   * - smallStart: which end of smallerNonSpiro to start from (0 = forward, 1 = reverse)
+   * - largeDir: which end of largerNonSpiro to start from (0 = forward, 1 = reverse)
+   *
+   * Numbering: s[start], s[start+1], ..., s[a-1], spiroAtom, l[0], l[1], ..., l[b-1]
+   * (or with reversals)
+   */
+  function buildLocantMap(
+    smallFwd: boolean,
+    largeFwd: boolean,
+  ): Map<number, number> {
+    const m = new Map<number, number>();
+    let loc = 1;
+
+    // Number the smaller ring (a non-spiro atoms)
+    const sAtoms = smallFwd ? smallerNonSpiro : [...smallerNonSpiro].reverse();
+    for (const at of sAtoms) m.set(at, loc++);
+
+    // Spiro atom gets locant a+1
+    m.set(spiroAtom, loc++);
+
+    // Number the larger ring (b non-spiro atoms)
+    const lAtoms = largeFwd ? largerNonSpiro : [...largerNonSpiro].reverse();
+    for (const at of lAtoms) m.set(at, loc++);
+
+    return m;
+  }
+
+  // Generate all candidate numberings: 4 combinations (2 small directions × 2 large directions)
+  // ALSO try starting from different atoms in each ring (rotate the smaller ring's start)
+  // since we need to find the atom that gives lowest heteroatom locants.
+  //
+  // For the smaller ring: we can start at any of the 'a' non-spiro atoms.
+  // For the larger ring: we can traverse forward or backward from the ring1/ring2 ordering.
+  //
+  // In practice, the "start" of traversal around a ring is the atom ADJACENT to the spiro atom.
+  // There are two atoms adjacent to spiro in the smaller ring (one on each side of the ring),
+  // which correspond to "forward" and "reverse" directions.
+  // But after we pick a direction, we can also pick WHICH adjacent atom is locant 1.
+  // Actually since walkRing gives the ring in one cyclic order starting from spiroAtom,
+  // the two directions ARE just "forward" and "reverse" of smallerNonSpiro.
+  //
+  // Key: in spiro[a.b]alkane, locant 1 is "next to the spiro atom in the smaller ring".
+  // The spiro atom itself gets locant a+1. There's no ambiguity about WHERE the spiro is;
+  // the only choices are:
+  //   - Which direction around the smaller ring (CW vs CCW)
+  //   - Which direction around the larger ring (CW vs CCW)
+  // These 4 combinations are enumerated below.
+
+  const candidates: Map<number, number>[] = [];
+  for (const smallFwd of [true, false]) {
+    for (const largeFwd of [true, false]) {
+      candidates.push(buildLocantMap(smallFwd, largeFwd));
+    }
+  }
+
+  // Evaluation function: extract locants for heteroatoms, PCG, subs
+  function evalMap(m: Map<number, number>): {
+    heteroLocs: number[];
+    pcgLocs: number[];
+    subLocs: number[];
+    unsatLocs: number[];
+  } {
+    const heteroLocs: number[] = [];
+    for (const at of ringSys.atoms) {
+      const el = atomById.get(at)?.element ?? "C";
+      if (el !== "C") {
+        const loc = m.get(at);
+        if (loc !== undefined) heteroLocs.push(loc);
+      }
+    }
+    heteroLocs.sort((x, y) => x - y);
+
+    const pcgLocs: number[] = [];
+    if (opts.pcgAtoms) {
+      for (const at of opts.pcgAtoms) {
+        const loc = m.get(at);
+        if (loc !== undefined) pcgLocs.push(loc);
+      }
+      pcgLocs.sort((x, y) => x - y);
+    }
+
+    const subLocs: number[] = [];
+    if (opts.subAtoms) {
+      for (const at of opts.subAtoms) {
+        const loc = m.get(at);
+        if (loc !== undefined) subLocs.push(loc);
+      }
+      subLocs.sort((x, y) => x - y);
+    }
+
+    const unsatLocs: number[] = [];
+    if (opts.unsatBonds) {
+      for (const [at1, at2] of opts.unsatBonds) {
+        const la = m.get(at1) ?? 99;
+        const lb = m.get(at2) ?? 99;
+        unsatLocs.push(Math.min(la, lb));
+      }
+      unsatLocs.sort((x, y) => x - y);
+    }
+
+    return { heteroLocs, pcgLocs, subLocs, unsatLocs };
+  }
+
+  function compareLocArr(a: number[], b: number[]): number {
+    const len = Math.min(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+      if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    }
+    return a.length - b.length;
+  }
+
+  // Select best candidate: heteroLocs → unsatLocs → pcgLocs → subLocs
+  let bestMap = candidates[0];
+  let bestEval = evalMap(candidates[0]);
+
+  for (const cand of candidates.slice(1)) {
+    const ev = evalMap(cand);
+    let cmp = compareLocArr(ev.heteroLocs, bestEval.heteroLocs);
+    if (cmp === 0) cmp = compareLocArr(ev.unsatLocs, bestEval.unsatLocs);
+    if (cmp === 0) cmp = compareLocArr(ev.pcgLocs, bestEval.pcgLocs);
+    if (cmp === 0) cmp = compareLocArr(ev.subLocs, bestEval.subLocs);
+    if (cmp < 0) { bestMap = cand; bestEval = ev; }
+  }
+
+  // ── Assemble the name ──────────────────────────────────────────────────────
+
+  // Collect heteroatoms sorted by priority order (O > S > N) then locant
+  const heteroEntries: { locant: number; element: string }[] = [];
+  for (const at of ringSys.atoms) {
+    const el = atomById.get(at)?.element ?? "C";
+    if (el !== "C") {
+      const loc = bestMap.get(at)!;
+      heteroEntries.push({ locant: loc, element: el });
+    }
+  }
+  heteroEntries.sort((x, y) => {
+    const px = SPIRO_HETERO_PRIORITY[x.element] ?? 99;
+    const py = SPIRO_HETERO_PRIORITY[y.element] ?? 99;
+    if (px !== py) return px - py;
+    return x.locant - y.locant;
+  });
+
+  // Build heteroatom prefix (e.g. "1-oxa", "1,4-dioxa", "1-aza")
+  let heteroPrefix: string;
+  if (heteroEntries.length > 0) {
+    // Group by element (same priority → same group)
+    const byEl = new Map<string, number[]>();
+    for (const { element, locant } of heteroEntries) {
+      const arr = byEl.get(element) ?? [];
+      arr.push(locant);
+      byEl.set(element, arr);
+    }
+    const groups = [...byEl.entries()].sort((a, b) =>
+      (SPIRO_HETERO_PRIORITY[a[0]] ?? 99) - (SPIRO_HETERO_PRIORITY[b[0]] ?? 99)
+    );
+    const MULT: Record<number, string> = { 1: "", 2: "di", 3: "tri", 4: "tetra" };
+    const parts: string[] = [];
+    for (const [el, locs] of groups) {
+      locs.sort((x, y) => x - y);
+      const locStr = locs.join(",");
+      const mult = MULT[locs.length] ?? `${locs.length}`;
+      parts.push(`${locStr}-${mult}${SPIRO_HETERO_PREFIX[el]}`);
+    }
+    heteroPrefix = parts.join("") + "spiro";
+  } else {
+    heteroPrefix = "spiro";
+  }
+
+  const descriptor = `${a}.${b}`;
+  const fullName = `${heteroPrefix}[${descriptor}]${alkaneBase}`;
+
+  return {
+    name: fullName,
+    locantOf: bestMap,
+    descriptor,
+    spiroAtom,
+  };
+}
+
 export function ringSubstituentName(
   parentName: string,
   kind: "carbocycle" | "benzene" | "heterocycle",

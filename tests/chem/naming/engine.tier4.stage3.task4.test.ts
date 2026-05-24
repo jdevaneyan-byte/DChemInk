@@ -156,11 +156,12 @@ describe("T4S3 Task4 – decline guard: out-of-scope systems still declined", ()
     expect(status("C12C3C4C1C5C4C3C25")).toBe("unsupported");
   });
 
-  it("spiro ring → unsupported", () => {
+  it("spiro ring → now named (Stage 4 spiro implemented)", () => {
+    // Stage 4 implemented monospiro naming; spiro[5.5]undecane is now supported.
     const g = graphFromSmiles("C1CCC2(CC1)CCCCC2");
     const r = g ? nameMolecule(g) : null;
-    expect(r?.status).toBe("unsupported");
-    expect(r?.reason).toMatch(/spiro/i);
+    expect(r?.status).toBe("named");
+    expect(r?.name).toBe("spiro[5.5]undecane");
   });
 
   it("ring assembly (biphenyl) → unsupported", () => {
