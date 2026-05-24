@@ -564,13 +564,16 @@ function nameCyclicCarbonyl(
 }
 
 /**
- * Name a saturated lactam or lactone.
+ * Name a saturated lactam or lactone, including substituted variants.
  *
  * Strategy:
- * 1. Verify exactly ONE cyclic carbonyl group, no additional exocyclic substituents
- *    (for simplicity; we decline if there are other substituents for now).
- * 2. Get parent ring name via nameRing (treating the ring C(=O) as a plain C).
- * 3. Map: parent → stem (e-elision), append -X-one where X = locant of the carbonyl C.
+ * 1. Verify exactly ONE cyclic carbonyl group (amide or ester kind).
+ * 2. Collect ring substituents (halogens and simple alkyl/haloalkyl on ring C atoms,
+ *    and simple substituents on the ring heteroatom for N-substituted lactams).
+ * 3. Build the IUPAC-fixed locant map: heteroatom=1, carbonyl C=2, then ascending
+ *    around the ring in the direction that gives lowest locants to substituents.
+ * 4. Name each substituent; if any is not expressible → DECLINE (no wrong names).
+ * 5. Assemble: prefixes + stem + "-2-one".
  */
 function nameSaturatedLactamLactone(
   graph: MolGraph,
@@ -595,43 +598,217 @@ function nameSaturatedLactamLactone(
   const exoOAtom = graph.atoms.find(a => a.index === exoOIdx);
   if (!exoOAtom || exoOAtom.element !== "O") return null;
 
-  // Verify there are no other exocyclic non-H substituents on the ring
-  // (no halogens, alkyl chains, etc. — bare lactam/lactone only)
+  const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+  const HAL_ELEMENTS = new Set(["F", "Cl", "Br", "I"]);
+  const HAL_PREFIX: Record<string, string> = { F: "fluoro", Cl: "chloro", Br: "bromo", I: "iodo" };
+
+  // ── Collect exocyclic substituents on ring atoms ──────────────────────────────
+  // Map: ring atom index → substituent name string (or null if not expressible)
+  const ringAtomSubs = new Map<number, string>(); // ring atom → substituent name
+
+  // Build exo carbon graph (non-ring carbons only) for nameSubstituent
+  const exoCg = buildCarbonGraph(graph);
+  for (const idx of ringSet) {
+    exoCg.carbons = exoCg.carbons.filter(c => c !== idx);
+    exoCg.adj.delete(idx);
+    for (const [, list] of exoCg.adj) {
+      const i = list.indexOf(idx);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+
   for (const ringAtomIdx of ring.atoms) {
     for (const b of graph.bonds) {
       const nbr = b.from === ringAtomIdx ? b.to : b.to === ringAtomIdx ? b.from : -1;
       if (nbr < 0) continue;
       if (ringSet.has(nbr)) continue; // ring bond
-      const nbrAtom = graph.atoms.find(a => a.index === nbr);
+      const nbrAtom = atomById.get(nbr);
       if (!nbrAtom || nbrAtom.element === "H") continue;
-      // Exocyclic heavy atom: must be the exo O of our one carbonyl
-      if (nbr === exoOIdx) continue;
-      // Anything else → substituents present → decline for now
-      return null;
+      // Exocyclic heavy atom: must be accounted for
+      if (nbr === exoOIdx) continue; // the carbonyl =O — handled as suffix
+
+      // Check for multiple substituents on the same ring atom (only simple cases for now)
+      if (ringAtomSubs.has(ringAtomIdx)) {
+        // More than one substituent on the same ring atom → decline (complex, not yet supported)
+        return null;
+      }
+
+      // Name the substituent
+      if (HAL_ELEMENTS.has(nbrAtom.element)) {
+        // Direct halogen substituent
+        ringAtomSubs.set(ringAtomIdx, HAL_PREFIX[nbrAtom.element]);
+      } else if (nbrAtom.element === "C") {
+        // Alkyl substituent: must be a simple chain with no ring atoms
+        // Check that the substituent subtree contains no ring atoms and no heteroatoms
+        // that aren't captured by nameSubstituent
+        const subAtoms = collectSubtreeAtoms(exoCg, nbr, ringAtomIdx);
+        // Verify all atoms in subtree are carbons (exoCg only tracks C-C bonds,
+        // but check the full graph for heteroatoms in the subtree)
+        let hasHeteroInSub = false;
+        for (const subC of subAtoms) {
+          // Check non-ring, non-H neighbors of subC for heteroatoms
+          for (const sb of graph.bonds) {
+            const sn = sb.from === subC ? sb.to : sb.to === subC ? sb.from : -1;
+            if (sn < 0) continue;
+            const snAtom = atomById.get(sn);
+            if (!snAtom || snAtom.element === "H") continue;
+            if (snAtom.element !== "C" && !ringSet.has(sn)) {
+              hasHeteroInSub = true;
+              break;
+            }
+          }
+          if (hasHeteroInSub) break;
+        }
+        if (hasHeteroInSub) {
+          // Complex substituent (heteroatom in the alkyl branch) — decline
+          return null;
+        }
+        const subName = nameSubstituent(exoCg, nbr, ringAtomIdx);
+        ringAtomSubs.set(ringAtomIdx, subName);
+      } else {
+        // Other element (O, N, S, etc.) not as halide → decline
+        return null;
+      }
     }
   }
 
-  // Get the ring naming: treat the ring as-is (the ring C that bears =O is just a ring C
-  // in terms of element sequence). The ring should match a saturated heterocycle in the table.
+  // ── Get the parent ring name to determine the parent stem ─────────────────────
+  // We call nameRing to get the parent name (e.g. "pyrrolidine", "piperidine").
+  // This also gives us the heteroatom's index for building our custom locant map.
   const ringNaming = nameRing(graph, ring, {});
   if (!ringNaming) return null;
   if (ringNaming.kind !== "heterocycle") return null; // only heterocycles produce lactams/lactones
 
   const parentName = ringNaming.parent;
-  const locantOf = ringNaming.locantOf;
 
   // Look up the e-elided stem
   const stem = SATURATED_CYCLIC_PARENT_BASE[parentName];
-  if (!stem) return null; // parent not in our table (shouldn't happen if ring table is complete)
+  if (!stem) return null; // parent not in our table
 
-  // Get the locant of the carbonyl ring carbon
-  const carbonylLoc = locantOf.get(carbonylGroup.carbon);
-  if (carbonylLoc === undefined) return null;
+  // ── Build the fixed lactam/lactone locant map ─────────────────────────────────
+  // IUPAC convention: heteroatom = 1, carbonyl C = 2. The carbonyl C is one of the
+  // two ring neighbors of the heteroatom. The direction (which neighbor is 2 vs n)
+  // is already fixed by this constraint (only one neighbor of the heteroatom is
+  // the carbonyl C). Then for substituents we choose the ring traversal direction
+  // that gives the lowest locant set.
+  //
+  // Find the single ring heteroatom (N or O):
+  if (ring.heteroatoms.length !== 1) {
+    return null; // multiple heteroatoms → not a simple lactam/lactone
+  }
+  const heteroIdx = ring.heteroatoms[0];
 
-  // The name is: stem + "-" + carbonylLoc + "-one"
-  // (e.g. "pyrrolidin" + "-2-one" = "pyrrolidin-2-one")
-  const finalName = `${stem}-${carbonylLoc}-one`;
+  // Find the two ring neighbors of the heteroatom
+  const n = ring.size;
+  const heteroPos = ring.atoms.indexOf(heteroIdx);
+  if (heteroPos < 0) return null;
+
+  const nextPos = (heteroPos + 1) % n;
+  const prevPos = ((heteroPos - 1) % n + n) % n;
+  const nextAtomIdx = ring.atoms[nextPos];
+  const prevAtomIdx = ring.atoms[prevPos];
+
+  // Determine which neighbor is the carbonyl C (must have an exo =O at exoOIdx)
+  const carbonylCIdx = carbonylGroup.carbon;
+  let direction: "forward" | "backward";
+  if (nextAtomIdx === carbonylCIdx) {
+    direction = "forward"; // heteroatom→C=O is the forward direction
+  } else if (prevAtomIdx === carbonylCIdx) {
+    direction = "backward";
+  } else {
+    return null; // carbonyl C is not adjacent to heteroatom — shouldn't happen for a lactam
+  }
+
+  // Build the locant map: heteroatom=1, carbonyl=2, then ascending
+  // In the "forward" direction: atoms are ring.atoms[heteroPos], ring.atoms[heteroPos+1], ...
+  // In the "backward" direction: atoms are ring.atoms[heteroPos], ring.atoms[heteroPos-1], ...
+  const buildLocantMap = (fwd: boolean): Map<number, number> => {
+    const m = new Map<number, number>();
+    for (let i = 0; i < n; i++) {
+      const pos = fwd ? (heteroPos + i) % n : ((heteroPos - i) % n + n) % n;
+      m.set(ring.atoms[pos], i + 1);
+    }
+    return m;
+  };
+
+  // The carbonyl C must be at locant 2 — this is fixed by IUPAC convention.
+  // Only the "correct" direction (that puts carbonylCIdx at locant 2) is valid.
+  // We've already determined this direction above. But for rings where substituent
+  // positions can be minimized by trying different directions from the SAME start,
+  // note that the start is always the heteroatom and the carbonyl must be at 2,
+  // so there's only ONE valid direction. We use it directly.
+  const isFwd = direction === "forward";
+  const locantOf = buildLocantMap(isFwd);
+
+  // Verify carbonyl gets locant 2
+  const carbonylLoc = locantOf.get(carbonylCIdx);
+  if (carbonylLoc !== 2) return null; // safety check
+
+  // ── Assign substituent locants and check expressibility ──────────────────────
+  const ringNameSubs: { locant: number; name: string }[] = [];
+
+  for (const [ringAtomIdx, subName] of ringAtomSubs) {
+    const loc = locantOf.get(ringAtomIdx);
+    if (loc === undefined) return null;
+    ringNameSubs.push({ locant: loc, name: subName });
+  }
+
+  // ── Build the prefix string ───────────────────────────────────────────────────
+  // Group substituents by name, sort alphabetically, assemble locant-prefixed string.
+  // This mirrors the ring substituent assembly in assembleRingName / prefixSegmentRing.
+  const prefixStr = buildLactamPrefix(ringNameSubs);
+
+  // The name is: prefix + stem + "-2-one"
+  const finalName = prefixStr + stem + "-2-one";
   return { name: finalName, status: "named" };
+}
+
+/**
+ * Build a prefix string for lactam/lactone substituents.
+ * Format: "5-methyl-" or "1-methyl-" or "5-chloro-" etc.
+ * Multiple substituents: sorted alphabetically with locants always cited.
+ */
+function buildLactamPrefix(subs: { locant: number; name: string }[]): string {
+  if (subs.length === 0) return "";
+
+  // Group by substituent name
+  const groups = new Map<string, number[]>();
+  for (const s of subs) {
+    const arr = groups.get(s.name) ?? [];
+    arr.push(s.locant);
+    groups.set(s.name, arr);
+  }
+
+  // Sort alphabetically (strip leading digits for sort key, same as assembleRingName)
+  const alphaKey = (name: string) =>
+    name.replace(/^\((.*)\)$/, "$1").replace(/^[\d,()\-\s]+/, "");
+
+  const parts = [...groups.entries()].map(([name, locants]) => ({
+    name,
+    locants: locants.sort((a, b) => a - b),
+  }));
+  parts.sort((a, b) => {
+    const ka = alphaKey(a.name), kb = alphaKey(b.name);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  // Multiplier prefixes: "di", "tri", etc.
+  const multPfx = (n: number) => ["", "", "di", "tri", "tetra"][n] ?? `${n}-`;
+  // Complex names (containing digits) get wrapped in parens
+  const isComplex = (n: string) => /\d/.test(n);
+  const disp = (n: string) => isComplex(n) ? `(${n})` : n;
+
+  const segments = parts.map(p =>
+    `${p.locants.join(",")}-${multPfx(p.locants.length)}${disp(p.name)}`
+  );
+
+  // Join segments with hyphens; add trailing hyphen to separate from the parent stem.
+  // However IUPAC names like "4-methylazetidin-2-one" show that when the substituent
+  // name itself is a simple alphabetic word (no internal digits), the concatenation is
+  // direct: "4-methyl" + "azetidin-2-one" = "4-methylazetidin-2-one".
+  // So we join all segments with "-" between them but do NOT add a trailing "-".
+  // The caller appends the stem directly (e.g. stem = "azetidin", "pyrrolidin").
+  return segments.join("-");
 }
 
 /**
