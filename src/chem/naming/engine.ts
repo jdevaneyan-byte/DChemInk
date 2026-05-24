@@ -4,7 +4,7 @@ import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } fro
 import { nameSubstituent } from "./substituent";
 import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, type SuffixKind, type Sub } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
-import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, type RingInfo } from "./ring";
+import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, nameFusedRing, type RingInfo } from "./ring";
 
 /**
  * Elements supported by Tier 2+3 (C, H, O, N, F, Cl, Br, I, S for heterocycles).
@@ -932,13 +932,49 @@ function nameAromaticRingCarbonyl(
 
 /**
  * Tier 4, Stage 2: name a fused (ortho-fused) multi-ring system.
- * Stub: returns unsupported until the fused table is in place (Task 2).
+ * Uses the curated fused ring table + isomorphism locant transfer.
+ * For Task 2: bare ring systems (no substituents, no functional groups).
+ * Task 3 will add substituents + functional groups.
  */
 function nameFusedRingSystem(
-  _graph: MolGraph,
-  _ringSys: import("./ring").RingSystemInfo,
+  graph: MolGraph,
+  ringSys: import("./ring").RingSystemInfo,
 ): NameResult {
-  return { name: null, status: "unsupported", reason: "fused ring system not yet supported — Tier 4 (Stage 2)" };
+  // Check element support: only C, H, N, O, S allowed in fused systems for now
+  const FUSED_SUPPORTED = new Set(["C", "H", "N", "O", "S"]);
+  for (const a of graph.atoms) {
+    if (!FUSED_SUPPORTED.has(a.element)) {
+      return { name: null, status: "unsupported", reason: `fused ring system contains ${a.element} — not yet supported in Tier 4 (Stage 2)` };
+    }
+  }
+
+  // Check that all heavy atoms are ring atoms (Task 2: no substituents allowed yet)
+  const heavy = graph.atoms.filter(a => a.element !== "H");
+  const ringAtoms = ringSys.atoms;
+  const nonRingHeavy = heavy.filter(a => !ringAtoms.has(a.index));
+
+  if (nonRingHeavy.length > 0) {
+    // Has exocyclic substituents → Task 3 will handle; for now decline
+    // (but Task 3 replaces this whole function, so we need a partial implementation here)
+    // For now: attempt naming, and use substituent machinery (to be filled in Task 3)
+    return nameFusedRingWithSubs();
+  }
+
+  // Pure fused ring (no exocyclic substituents): look up in curated table
+  const naming = nameFusedRing(graph, ringSys, {});
+  if (!naming) {
+    return { name: null, status: "unsupported", reason: "fused ring system not in curated table — Tier 4 (general fusion, later stage)" };
+  }
+
+  return { name: naming.parent, status: "named" };
+}
+
+/**
+ * Name a fused ring system that has exocyclic substituents.
+ * Placeholder for Task 3 machinery; currently declines.
+ */
+function nameFusedRingWithSubs(): NameResult {
+  return { name: null, status: "unsupported", reason: "fused ring system with substituents — Tier 4 (Stage 2, Task 3)" };
 }
 
 /**

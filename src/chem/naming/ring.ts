@@ -90,9 +90,11 @@ export function perceiveRingSystem(graph: MolGraph): RingSystemInfo {
 
   let hasSpiro = false;
   let hasBridged = false;
-  let hasDisjoint = false;
-  let hasFused = false;
   let hasOther = false;
+
+  // Ring adjacency: ring i and ring j are "adjacent" if they share any atoms.
+  // Used to determine if the ring system is connected (not a disjoint assembly).
+  const ringNeighbors: Set<number>[] = rings.map(() => new Set<number>());
 
   for (let i = 0; i < rings.length; i++) {
     for (let j = i + 1; j < rings.length; j++) {
@@ -101,28 +103,47 @@ export function perceiveRingSystem(graph: MolGraph): RingSystemInfo {
         if (ringSets[j].has(a)) shared.push(a);
       }
       if (shared.length === 0) {
-        hasDisjoint = true;
+        // Disjoint pair: not adjacent in ring graph; check later if whole system is disconnected
       } else if (shared.length === 1) {
         hasSpiro = true;
+        ringNeighbors[i].add(j);
+        ringNeighbors[j].add(i);
       } else if (shared.length === 2) {
-        // Check if the two shared atoms are bonded
-        if (hasBond(shared[0], shared[1])) {
-          hasFused = true;
-        } else {
+        // Two shared atoms: ortho-fused if bonded, bridged otherwise
+        if (!hasBond(shared[0], shared[1])) {
           hasBridged = true;
         }
+        // (ortho-fused case: no flag needed — kind defaults to "fused" when no other flags set)
+        ringNeighbors[i].add(j);
+        ringNeighbors[j].add(i);
       } else if (shared.length === 3) {
         // 3 shared atoms in SSSR rings: this is a bicyclo bridged system
         // e.g. norbornane: two SSSR rings sharing a one-atom bridge + two bridgeheads
-        // The bridge atom is between the two bridgehead atoms but not directly bonded to both
-        // → classify as bridged (von Baeyer)
         hasBridged = true;
+        ringNeighbors[i].add(j);
+        ringNeighbors[j].add(i);
       } else {
-        // 4+ shared atoms: complex topology (e.g. adamantane or other unusual systems)
+        // 4+ shared atoms: complex topology
         hasOther = true;
+        ringNeighbors[i].add(j);
+        ringNeighbors[j].add(i);
       }
     }
   }
+
+  // Check if the ring system is connected (all rings reachable from ring 0)
+  const ringVisited = new Set<number>([0]);
+  const ringQueue = [0];
+  while (ringQueue.length > 0) {
+    const cur = ringQueue.shift()!;
+    for (const nb of ringNeighbors[cur]) {
+      if (!ringVisited.has(nb)) {
+        ringVisited.add(nb);
+        ringQueue.push(nb);
+      }
+    }
+  }
+  const isDisconnectedAssembly = ringVisited.size < rings.length;
 
   let kind: RingSystemKind;
   if (hasOther) {
@@ -131,10 +152,11 @@ export function perceiveRingSystem(graph: MolGraph): RingSystemInfo {
     kind = "spiro";
   } else if (hasBridged) {
     kind = "bridged";
-  } else if (hasDisjoint) {
+  } else if (isDisconnectedAssembly) {
+    // The rings form disconnected components (e.g. biphenyl: two separate benzene rings)
     kind = "assembly";
   } else {
-    // Only fused pairs found
+    // All rings are connected via shared atoms/bonds → fused (ortho-fused for our purposes)
     kind = "fused";
   }
 
@@ -1007,6 +1029,648 @@ function getLocants(locantOf: Map<number, number>, atomSet: Set<number>): number
  * attachAtomIdx: the ring atom where the bond to the chain is formed.
  * attachLocant: the IUPAC locant of that atom.
  */
+// ────────────────────────────────────────────────────────────────────────────────
+// T4 Stage 2: polycyclic fingerprint + curated fused table + isomorphism naming
+// ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Atom label for polycyclic fingerprint: element + (for H-bearing heteroatoms) H count.
+ * Aromatic ring atoms are detected by examining the ring-bond network.
+ */
+function fusedAtomLabel(graph: MolGraph, idx: number): string {
+  const a = graph.atoms.find(x => x.index === idx);
+  if (!a) return "?";
+  // H on heteroatom is significant (e.g. N-H vs pyridine-N vs pyrrole-N)
+  if (a.element !== "C" && a.hydrogens > 0) {
+    return `${a.element}H${a.hydrogens}`;
+  }
+  return a.element;
+}
+
+/**
+ * Bond label between two ring atoms (use order, but normalize aromatic ring bonds).
+ * Since all fused systems we care about are aromatic, use "ar" for all ring bonds
+ * between aromatic-ring atoms and actual order otherwise.
+ */
+function fusedBondLabel(graph: MolGraph, a: number, b: number): string {
+  for (const bond of graph.bonds) {
+    if ((bond.from === a && bond.to === b) || (bond.from === b && bond.to === a)) {
+      // Use actual Kekulé order; this is stable for aromatic systems
+      return String(bond.order);
+    }
+  }
+  return "1";
+}
+
+/**
+ * Build a canonical polycyclic fingerprint for the fused ring skeleton.
+ *
+ * Algorithm:
+ * 1. Collect all ring atoms and ring bonds (bonds with both endpoints in ring).
+ * 2. Build the local graph with atom labels and bond labels.
+ * 3. Use WL (Weisfeiler-Lehman) iteration to get canonical atom signatures.
+ * 4. Canonicalize by finding the starting atom that produces the lex-smallest
+ *    BFS sequence.
+ *
+ * Returns a canonical string that is identical for all valid graph isomorphs.
+ */
+export function polycyclicFingerprint(graph: MolGraph, ringSys: RingSystemInfo): string {
+  const atoms = [...ringSys.atoms].sort((a, b) => a - b);
+  if (atoms.length === 0) return "";
+
+  const atomLabel = (idx: number): string => fusedAtomLabel(graph, idx);
+  const bondLabel = (a: number, b: number): string => fusedBondLabel(graph, a, b);
+
+  // Build adjacency for ring atoms (ring bonds only)
+  const adj = new Map<number, number[]>();
+  for (const a of atoms) adj.set(a, []);
+  for (const b of graph.bonds) {
+    if (ringSys.atoms.has(b.from) && ringSys.atoms.has(b.to)) {
+      adj.get(b.from)!.push(b.to);
+      adj.get(b.to)!.push(b.from);
+    }
+  }
+
+  // Produce canonical BFS string starting from each atom, pick lex-smallest
+  // BFS format: atomLabel(bond_order)atomLabel(bond_order)...
+  function bfsString(start: number): string {
+    const visited = new Set<number>([start]);
+    const queue: number[] = [start];
+    const parts: string[] = [atomLabel(start)];
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      // Sort neighbors by their BFS-canonical label for determinism
+      const nbrs = (adj.get(cur) ?? []).filter(n => !visited.has(n));
+      // Sort by: bond label, then atom label
+      nbrs.sort((a, b) => {
+        const bl1 = bondLabel(cur, a), bl2 = bondLabel(cur, b);
+        if (bl1 !== bl2) return bl1 < bl2 ? -1 : 1;
+        const al1 = atomLabel(a), al2 = atomLabel(b);
+        return al1 < al2 ? -1 : al1 > al2 ? 1 : 0;
+      });
+      for (const nbr of nbrs) {
+        visited.add(nbr);
+        queue.push(nbr);
+        parts.push(`(${bondLabel(cur, nbr)})${atomLabel(nbr)}`);
+      }
+    }
+    return parts.join("|");
+  }
+
+  let best = "";
+  for (const a of atoms) {
+    const s = bfsString(a);
+    if (best === "" || s < best) best = s;
+  }
+  return best;
+}
+
+// ── Curated fused ring table ──────────────────────────────────────────────────
+
+export interface FusedRingEntry {
+  /** IUPAC retained name (e.g. "naphthalene", "1H-indole") */
+  name: string;
+  /**
+   * Canonical atom order: atoms listed in IUPAC locant order (index i → locant i+1).
+   * Each element is an atom descriptor: `{ element, hydrogens }`
+   * This describes the table's canonical form; isomorphism maps real atoms onto it.
+   */
+  canonicalOrder: { element: string; hydrogens: number }[];
+  /**
+   * Ring bonds in canonical order (for isomorphism matching).
+   * Each entry is [locant_a - 1, locant_b - 1] (0-based indices into canonicalOrder).
+   */
+  canonicalBonds: [number, number][];
+  /**
+   * Indicated hydrogen locant (1-based), if any. E.g. 1 for "1H-indole", 7 for "7H-purine".
+   * null for systems with no indicated H.
+   */
+  indicatedH: number | null;
+}
+
+/**
+ * Build the ring graph adjacency for the table entry.
+ * Returns adj: Map<index, Set<neighbor index>>.
+ */
+function tableAdj(entry: FusedRingEntry): Map<number, Set<number>> {
+  const n = entry.canonicalOrder.length;
+  const adj = new Map<number, Set<number>>();
+  for (let i = 0; i < n; i++) adj.set(i, new Set());
+  for (const [a, b] of entry.canonicalBonds) {
+    adj.get(a)!.add(b);
+    adj.get(b)!.add(a);
+  }
+  return adj;
+}
+
+/**
+ * The curated fused ring table.
+ *
+ * For each entry:
+ * - canonicalOrder: atoms in IUPAC locant order (locant = index+1)
+ * - canonicalBonds: bonds (pairs of 0-based indices)
+ * - indicatedH: locant of N-H (1-based), or null
+ *
+ * Atom descriptors: { element, hydrogens } where hydrogens = attached H count.
+ * For fully aromatic systems all H=0 except N-H positions.
+ *
+ * IUPAC numbering references: Nomenclature of Fused Polycyclic Hydrocarbons (IUPAC 2013),
+ * Hantzsch-Widman names, and PubChem verified names.
+ */
+function C(hydrogens = 1): { element: string; hydrogens: number } {
+  return { element: "C", hydrogens };
+}
+function N(hydrogens = 0): { element: string; hydrogens: number } {
+  return { element: "N", hydrogens };
+}
+function O(): { element: string; hydrogens: number } {
+  return { element: "O", hydrogens: 0 };
+}
+function S(): { element: string; hydrogens: number } {
+  return { element: "S", hydrogens: 0 };
+}
+const C0 = C(0); // fusion carbon (no H)
+
+export const FUSED_RING_TABLE: FusedRingEntry[] = [
+  // ────────────────────────────────────────────────────────────────────────────
+  // NAPHTHALENE (C10H8): two fused benzene rings
+  // IUPAC numbering: atoms 1-4 in first ring, then 4a,5-8,8a (fusion atoms 4a,8a)
+  // For our purposes: atoms numbered 1-10 linearly:
+  //   Ring 1: 1-2-3-4-4a-8a  Ring 2: 4a-5-6-7-8-8a
+  //   Locants: 1,2,3,4,4a=5,5=6,6=7,7=8,8=9,8a=10 (simplified to 1-10 without a/b)
+  // Actually for substituent purposes we use simple 1-8 + 4a,8a.
+  // PubChem canonical for 2-methylnaphthalene: position 2 is the second C.
+  // For the isomorphism we only need the connectivity, not the "a" notation.
+  // Atoms: 1(C),2(C),3(C),4(C),4a(C),5(C),6(C),7(C),8(C),8a(C)
+  // Bonds: 1-2,2-3,3-4,4-4a,4a-5,5-6,6-7,7-8,8-8a,8a-1,4a-8a
+  // 4a=index 4, 8a=index 9 (0-based: 0-9)
+  {
+    name: "naphthalene",
+    indicatedH: null,
+    canonicalOrder: [C(), C(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
+      [4,9], // fusion bond (4a–8a)
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // QUINOLINE (C9H7N): benzo[b]pyridine – N at position 1
+  // Ring 1 (pyridine): 1(N),2(C),3(C),4(C),4a(C),8a(C)
+  // Ring 2 (benzene): 4a,5(C),6(C),7(C),8(C),8a
+  // Atoms (0-based): 0=N(1), 1=C(2), 2=C(3), 3=C(4), 4=C(4a), 5=C(5), 6=C(6), 7=C(7), 8=C(8), 9=C(8a)
+  {
+    name: "quinoline",
+    indicatedH: null,
+    canonicalOrder: [N(), C(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
+      [4,9],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // ISOQUINOLINE (C9H7N): N at position 2
+  // Ring 1 (pyridine): 1(C),2(N),3(C),4(C),4a(C),8a(C)
+  // Ring 2 (benzene): 4a,5,6,7,8,8a
+  // Atoms (0-based): 0=C(1), 1=N(2), 2=C(3), 3=C(4), 4=C(4a), 5=C(5), 6=C(6), 7=C(7), 8=C(8), 9=C(8a)
+  {
+    name: "isoquinoline",
+    indicatedH: null,
+    canonicalOrder: [C(), N(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
+      [4,9],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 1-BENZOFURAN: benzo[b]furan – O at position 1 (heteroatom ring = 5-membered)
+  // PubChem name: 1-benzofuran
+  // IUPAC numbering: O=1, C2=2, C3=3, C3a=4(fused), C4=5, C5=6, C6=7, C7=8, C7a=9(fused)
+  // 0-based: 0=O(1),1=C(2),2=C(3),3=C(3a),4=C(4),5=C(5),6=C(6),7=C(7),8=C(7a)
+  // Bonds: O-C2(0-1),C2-C3(1-2),C3-C3a(2-3),C3a-C7a(3-8 fusion),C3a-C4(3-4),C4-C5(4-5),C5-C6(5-6),C6-C7(6-7),C7-C7a(7-8),C7a-O(8-0)
+  {
+    name: "1-benzofuran",
+    indicatedH: null,
+    canonicalOrder: [O(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,8], // fusion bond C3a-C7a
+      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 1-BENZOTHIOPHENE: benzo[b]thiophene – S at position 1
+  // Same topology as benzofuran but S instead of O
+  // PubChem: 1-benzothiophene
+  {
+    name: "1-benzothiophene",
+    indicatedH: null,
+    canonicalOrder: [S(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,8],
+      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 1H-INDOLE: benzo[b]pyrrole – N-H at position 1
+  // PubChem: 1H-indole
+  // IUPAC numbering: N=1, C2=2, C3=3, C3a=4(fused), C4=5, C5=6, C6=7, C7=8, C7a=9(fused)
+  // 0-based: 0=NH(1),1=C(2),2=C(3),3=C(3a),4=C(4),5=C(5),6=C(6),7=C(7),8=C(7a)
+  {
+    name: "1H-indole",
+    indicatedH: 1,
+    canonicalOrder: [N(1), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,8],
+      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 1H-BENZIMIDAZOLE: benzo[d]imidazole – N-H at position 1, N at position 3
+  // PubChem: 1H-benzimidazole
+  // IUPAC numbering: NH=1, C2=2(between N1 and N3), N=3, C3a=4(fused), C4=5, C5=6, C6=7, C7=8, C7a=9(fused)
+  // 0-based: 0=NH(1),1=C(2),2=N(3),3=C(3a),4=C(4),5=C(5),6=C(6),7=C(7),8=C(7a)
+  {
+    name: "1H-benzimidazole",
+    indicatedH: 1,
+    canonicalOrder: [N(1), C(), N(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,8],
+      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 1H-INDAZOLE: benzo[c]pyrazole – N-H at position 1, N at position 2
+  // PubChem: 1H-indazole
+  // IUPAC: N-H=1, N=2, C=3, C3a=4(fused), C4=5, C5=6, C6=7, C7=8, C7a=9(fused)
+  // 0-based: 0=NH(1),1=N(2),2=C(3),3=C(3a),4=C(4),5=C(5),6=C(6),7=C(7),8=C(7a)
+  {
+    name: "1H-indazole",
+    indicatedH: 1,
+    canonicalOrder: [N(1), N(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,8],
+      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // QUINOXALINE: benzo[g]pyrazine – N at 1 and N at 4 in bicyclic numbering
+  // PubChem: quinoxaline
+  // IUPAC numbering: N=1, C=2, N=3 (wait - actually quinoxaline is 1,4-benzodiazine)
+  // Quinoxaline: positions 1,4 are N in the pyrazine ring fused to benzene.
+  // IUPAC: atoms 1(N),2(C),3(N),4(C hmm) ...
+  // Standard quinoxaline numbering: N1, C2, N3, C4(? no)
+  // Actually quinoxaline = benzo[g]pyrazine: N at 1 and 4 (para to each other in 6-membered ring)
+  // Wait: quinoxaline CID 9260 - the pyrazine ring is fused.
+  // Standard IUPAC: 1-N, 2-C, 3-N, 4-... no
+  // Quinoxaline numbering per IUPAC: N1-C2=C3-N4=... no
+  // SMILES c1cnc2ccccc2n1: atom order 0=C(1),1=N(2? or 4?),2=C(3),3=C(3a or 4a),4=C,5=C,6=C,7=C,8=C(8a or similar),9=N
+  // PubChem canonical SMILES for quinoxaline: C1=CN=C2C=CC=CC2=N1
+  // IUPAC locants: N1,C2,N3,C4,C4a,C5,C6,C7,C8,C8a (numbering: N at 1 and 4)
+  // Bonds: N1-C2,C2=N3(? no), N1=C8a,C8a-C8,...
+  // Standard: 1(N),2(C),3(N),then C4=C(bridge)...
+  // Actually IUPAC 2013 says quinoxaline = 1,4-benzodiazine, N at positions 1,4.
+  // Ring atoms (0-based): 0=N(1),1=C(2),2=N(3? no, 4 is the second N)...
+  // Let me use: 0=N(1),1=C(2),2=C(3),3=N(4),4=C(4a)fusion,5=C(5),6=C(6),7=C(7),8=C(8),9=C(8a)fusion
+  {
+    name: "quinoxaline",
+    indicatedH: null,
+    canonicalOrder: [N(), C(), C(), N(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
+      [4,9],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // QUINAZOLINE: benzo[d]pyrimidine – N at 1 and 3 (1,3-positions)
+  // PubChem: quinazoline
+  // IUPAC: N1,C2,N3,C4,C4a(fused),C5,C6,C7,C8,C8a(fused)
+  // 0-based: 0=N(1),1=C(2),2=N(3),3=C(4),4=C(4a),5=C(5),6=C(6),7=C(7),8=C(8),9=C(8a)
+  {
+    name: "quinazoline",
+    indicatedH: null,
+    canonicalOrder: [N(), C(), N(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
+      [4,9],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // CINNOLINE: benzo[c]pyridazine – N at 1 and 2 (adjacent)
+  // PubChem: cinnoline
+  // IUPAC: N1,N2,C3,C4,C4a(fused),C5,C6,C7,C8,C8a(fused)
+  // 0-based: 0=N(1),1=N(2),2=C(3),3=C(4),4=C(4a),5=C(5),6=C(6),7=C(7),8=C(8),9=C(8a)
+  {
+    name: "cinnoline",
+    indicatedH: null,
+    canonicalOrder: [N(), N(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
+      [4,9],
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 7H-PURINE: imidazo[4,5-d]pyrimidine – N at 1,3,7,9 (bicyclic, 4N)
+  // PubChem: 7H-purine (preferred tautomer; 9H-purine also named "7H-purine" by PubChem)
+  // IUPAC numbering for 7H-purine:
+  //   Ring I (pyrimidine): N1,C2,N3,C4,C5,C6  (6-membered)
+  //   Ring II (imidazole): C4,C5,N7(H),C8,N9  (5-membered, shared: C4,C5)
+  //   7H means N7 bears H
+  // Topology (7H-purine): NH (N7) is adjacent to C8 and C5(fusion).
+  //   C5(fusion) connects to C4(fusion), C6, N7. C4(fusion) connects to N3, C5, N9.
+  // 0-based indices (IUPAC order): 0=N(1),1=C(2),2=N(3),3=C(4),4=C(5),5=C(6),6=N(7,H),7=C(8),8=N(9)
+  // Bonds: pyrimidine: (0,1),(1,2),(2,3),(3,4),(4,5),(5,0)
+  //        imidazole:  (3,8),(8,7),(7,6),(6,4)
+  {
+    name: "7H-purine",
+    indicatedH: 7,
+    canonicalOrder: [N(), C(), N(), C0, C0, C(), N(1), C(), N()],
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,4],[4,5],[5,0], // pyrimidine ring
+      [3,8],[8,7],[7,6],[6,4],              // imidazole ring (shared: 3=C4, 4=C5)
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 7H-PURINE (9H-tautomer topology): same preferred name per PubChem normalization
+  // The SMILES c1nc2[nH]cnc2cn1 draws the 9H tautomer (NH at N9) but PubChem
+  // normalizes this to "7H-purine". We accept both tautomer topologies.
+  // Topology (9H-purine): NH (N9) is adjacent to C8 and C4(fusion).
+  //   C4(fusion) connects to N3, C5(fusion), N9. C5(fusion) connects to C4, C6, N7.
+  // 0-based indices (drawn topology from c1nc2[nH]cnc2cn1):
+  //   0=C, 1=N, 2=C(fusion), 3=NH, 4=C, 5=N, 6=C(fusion), 7=C, 8=N
+  // Bonds: 6-ring: [0,1],[1,2],[2,6],[6,7],[7,8],[8,0]
+  //        5-ring: [2,3],[3,4],[4,5],[5,6] (shared: 2,6)
+  {
+    name: "7H-purine",
+    indicatedH: 7,
+    canonicalOrder: [C(), N(), C0, N(1), C(), N(), C0, C(), N()],
+    canonicalBonds: [
+      [0,1],[1,2],[2,6],[6,7],[7,8],[8,0], // pyrimidine ring (6-membered)
+      [2,3],[3,4],[4,5],[5,6],              // imidazole ring (5-membered; shared: 2=C4, 6=C5)
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // ANTHRACENE (C14H10): three linearly fused benzene rings
+  // Linear fusion A-B-C: each adjacent pair shares one bond (2 atoms).
+  // 14 atoms, 15 bonds total (3×6 - 2×2 = 14 atoms; 3×6 - 2×1 = 16... actually 3×6-3=15).
+  //
+  // Topology derived from RDKit output for c1ccc2cc3ccccc3cc2c1:
+  //   Fusion atoms (H=0, degree 3): indices 3, 5, 10, 12 (0-based in drawn graph)
+  //   Outer perimeter: 0-1-2-3-4-5-6-7-8-9-10-11-12-13-0 (14 atoms)
+  //   Fusion bonds: 3-12 (between ring1 and ring2) and 5-10 (between ring2 and ring3)
+  //   Ring1: {0,1,2,3,12,13}  Ring2: {3,4,5,10,11,12}  Ring3: {5,6,7,8,9,10}
+  //
+  // IUPAC locant assignment: 1=C,2=C,3=C,4=C,4a=C(fus),5=C,6=C,7=C,8=C,9=C,10=C,10a=C(fus),9a=C(fus),4b=C(fus)
+  // In table indices: 0-based positions are used; locant = index+1 (with 4a=index 3, 9a=index 5, etc.)
+  {
+    name: "anthracene",
+    indicatedH: null,
+    canonicalOrder: [
+      C(), C(), C(), C0, C(), C0, C(), C(), C(), C(), C0, C(), C0, C(),
+    ],
+    // Perimeter bonds + 2 fusion bonds matching RDKit c1ccc2cc3ccccc3cc2c1 topology:
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],[11,12],[12,13],[13,0],
+      [3,12],[5,10], // fusion bonds
+    ],
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // PHENANTHRENE (C14H10): three fused benzene rings in angular arrangement
+  // Angular fusion distinguishes it from anthracene (linear).
+  //
+  // Topology derived from RDKit output for c1ccc2ccc3ccccc3c2c1:
+  //   Fusion atoms (H=0, degree 3): indices 3, 6, 11, 12 (0-based in drawn graph)
+  //   Outer perimeter: 0-1-2-3-4-5-6-7-8-9-10-11-12-13-0 (14 atoms)
+  //   Fusion bonds: 3-12 (between ring1 and ring2) and 6-11 (between ring2 and ring3)
+  //   Ring1: {0,1,2,3,12,13}  Ring2: {3,4,5,6,11,12}  Ring3: {6,7,8,9,10,11}
+  //
+  // The angular topology means fusion bonds 3-12 and 6-11 are separated by 3 perimeter
+  // steps (3→4→5→6), vs anthracene's 2 steps (3→4→5). This is the key graph difference.
+  {
+    name: "phenanthrene",
+    indicatedH: null,
+    canonicalOrder: [
+      C(), C(), C(), C0, C(), C(), C0, C(), C(), C(), C(), C0, C0, C(),
+    ],
+    // Perimeter bonds + 2 fusion bonds matching RDKit c1ccc2ccc3ccccc3c2c1 topology:
+    canonicalBonds: [
+      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],[11,12],[12,13],[13,0],
+      [3,12],[6,11], // fusion bonds (angular)
+    ],
+  },
+];
+
+// ── Graph isomorphism for fused ring systems ──────────────────────────────────
+
+/**
+ * Find all graph isomorphisms between the drawn ring system and the table entry.
+ * Returns a list of maps: drawn atom index → table locant (1-based).
+ *
+ * Uses VF2-style backtracking for small graphs (≤14 atoms).
+ *
+ * @param graph - the full molecular graph
+ * @param ringSys - the perceived ring system
+ * @param entry - the table entry to match against
+ */
+function findIsomorphisms(
+  graph: MolGraph,
+  ringSys: RingSystemInfo,
+  entry: FusedRingEntry,
+): Map<number, number>[] {
+  const drawnAtoms = [...ringSys.atoms].sort((a, b) => a - b);
+  const tableAtoms = entry.canonicalOrder;
+  const n = tableAtoms.length;
+
+  if (drawnAtoms.length !== n) return [];
+
+  // Build drawn adjacency (ring bonds only)
+  const drawnAdj = new Map<number, Set<number>>();
+  for (const a of drawnAtoms) drawnAdj.set(a, new Set());
+  for (const b of graph.bonds) {
+    if (ringSys.atoms.has(b.from) && ringSys.atoms.has(b.to)) {
+      drawnAdj.get(b.from)!.add(b.to);
+      drawnAdj.get(b.to)!.add(b.from);
+    }
+  }
+
+  // Build table adjacency (0-based), returns Map<index, Set<neighbor>>
+  const tableAdjMap: Map<number, Set<number>> = tableAdj(entry);
+
+  // Get drawn atom label (element + H count)
+  const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+  const drawnLabel = (idx: number): string => {
+    const a = atomById.get(idx);
+    if (!a) return "?";
+    if (a.element !== "C" && a.hydrogens > 0) return `${a.element}H${a.hydrogens}`;
+    return a.element;
+  };
+
+  // Get table atom label
+  const tableLabel = (i: number): string => {
+    const t = tableAtoms[i];
+    if (t.element !== "C" && t.hydrogens > 0) return `${t.element}H${t.hydrogens}`;
+    return t.element;
+  };
+
+  // Check degree compatibility
+  const drawnDegree = (idx: number): number => drawnAdj.get(idx)?.size ?? 0;
+  const tableDegree = (i: number): number => tableAdjMap.get(i)?.size ?? 0;
+
+  // VF2-style backtracking
+  const mapping: Map<number, number> = new Map(); // drawnAtom → tableIndex (0-based)
+  const usedTable = new Set<number>();
+  const results: Map<number, number>[] = [];
+
+  function isCompatible(drawnIdx: number, tableIdx: number): boolean {
+    if (drawnLabel(drawnIdx) !== tableLabel(tableIdx)) return false;
+    if (drawnDegree(drawnIdx) !== tableDegree(tableIdx)) return false;
+    // Check consistency with existing partial mapping
+    for (const [da, ta] of mapping) {
+      const drawnConnected = drawnAdj.get(drawnIdx)?.has(da) ?? false;
+      const tableConnected = tableAdjMap.get(tableIdx)?.has(ta) ?? false;
+      if (drawnConnected !== tableConnected) return false;
+    }
+    return true;
+  }
+
+  function backtrack(step: number): void {
+    if (step === n) {
+      // Complete mapping found: convert to locant map (locant = tableIdx + 1)
+      const locantMap = new Map<number, number>();
+      for (const [da, ti] of mapping) {
+        locantMap.set(da, ti + 1);
+      }
+      results.push(locantMap);
+      return;
+    }
+
+    // Pick next drawn atom to map (in order of drawnAtoms array)
+    const nextDrawn = drawnAtoms[step];
+
+    // Try all unused table positions
+    for (let ti = 0; ti < n; ti++) {
+      if (usedTable.has(ti)) continue;
+      if (!isCompatible(nextDrawn, ti)) continue;
+
+      mapping.set(nextDrawn, ti);
+      usedTable.add(ti);
+      backtrack(step + 1);
+      mapping.delete(nextDrawn);
+      usedTable.delete(ti);
+    }
+  }
+
+  backtrack(0);
+  return results;
+}
+
+/**
+ * Compare two locant arrays (ascending) for the isomorphism selection criterion.
+ * Lower first-difference wins (IUPAC lowest locant rule).
+ */
+function compareLocantSets(a: number[], b: number[]): number {
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return a.length - b.length;
+}
+
+/**
+ * Result of fused ring name lookup.
+ */
+export interface FusedRingNaming {
+  parent: string;
+  /** Map: drawn atom index → IUPAC locant (1-based) */
+  locantOf: Map<number, number>;
+  /** Whether the name has an indicated hydrogen prefix (e.g. "1H-") */
+  indicatedH: number | null;
+  kind: "fused";
+}
+
+/**
+ * Look up the fused ring system in the curated table, perform isomorphism
+ * to assign locants, and return the naming or null if not matched.
+ *
+ * Selection among multiple isomorphisms:
+ * 1. Lowest locant set for PCG atoms (if any)
+ * 2. Lowest locant set for substituent atoms
+ * 3. Arbitrary (first found)
+ */
+export function nameFusedRing(
+  graph: MolGraph,
+  ringSys: RingSystemInfo,
+  opts: {
+    pcgAtoms?: Set<number>;
+    subAtoms?: Set<number>;
+  } = {},
+): FusedRingNaming | null {
+  const n = ringSys.atoms.size;
+
+  // Find matching table entries by atom count
+  const candidates = FUSED_RING_TABLE.filter(e => e.canonicalOrder.length === n);
+  if (candidates.length === 0) return null;
+
+  for (const entry of candidates) {
+    const isos = findIsomorphisms(graph, ringSys, entry);
+    if (isos.length === 0) continue;
+
+    // Among valid isomorphisms, pick the one with lowest locants for PCG, then subs
+    let best = isos[0];
+
+    if (opts.pcgAtoms && opts.pcgAtoms.size > 0) {
+      let bestPcgLocs = [...opts.pcgAtoms]
+        .map(a => best.get(a) ?? 99)
+        .sort((x, y) => x - y);
+
+      for (const iso of isos.slice(1)) {
+        const pcgLocs = [...opts.pcgAtoms]
+          .map(a => iso.get(a) ?? 99)
+          .sort((x, y) => x - y);
+        if (compareLocantSets(pcgLocs, bestPcgLocs) < 0) {
+          best = iso;
+          bestPcgLocs = pcgLocs;
+        }
+      }
+    } else if (opts.subAtoms && opts.subAtoms.size > 0) {
+      let bestSubLocs = [...opts.subAtoms]
+        .map(a => best.get(a) ?? 99)
+        .sort((x, y) => x - y);
+
+      for (const iso of isos.slice(1)) {
+        const subLocs = [...opts.subAtoms]
+          .map(a => iso.get(a) ?? 99)
+          .sort((x, y) => x - y);
+        if (compareLocantSets(subLocs, bestSubLocs) < 0) {
+          best = iso;
+          bestSubLocs = subLocs;
+        }
+      }
+    }
+
+    return {
+      parent: entry.name,
+      locantOf: best,
+      indicatedH: entry.indicatedH,
+      kind: "fused",
+    };
+  }
+
+  return null;
+}
+
 export function ringSubstituentName(
   parentName: string,
   kind: "carbocycle" | "benzene" | "heterocycle",

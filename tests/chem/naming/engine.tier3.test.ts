@@ -60,11 +60,6 @@ function status(smiles: string) {
   return nameMolecule(g).status;
 }
 
-function reason(smiles: string) {
-  const g = graphFromSmiles(smiles);
-  if (!g) return "";
-  return nameMolecule(g).reason ?? "";
-}
 
 describe("Tier 3 – carbocycles", () => {
   it("C1CCCCC1 → cyclohexane", () => {
@@ -309,9 +304,9 @@ describe("Tier 3 – PubChem audit bug fixes", () => {
 });
 
 describe("Tier 3 – rejections (Tier 4 / out-of-scope)", () => {
-  it("naphthalene → unsupported (Tier 4, 2 rings)", () => {
-    expect(status("c1ccc2ccccc2c1")).toBe("unsupported");
-    expect(reason("c1ccc2ccccc2c1")).toMatch(/Tier 4|fused|multiple ring/i);
+  it("naphthalene → named (T4 Stage 2 curated fused table added in Task 2)", () => {
+    // T4 Stage 2 added support for common fused ring systems; naphthalene is now named.
+    expect(status("c1ccc2ccccc2c1")).toBe("named");
   });
 
   it("7-membered N ring (azepane) → azepane (now supported; added for azepan-2-one)", () => {

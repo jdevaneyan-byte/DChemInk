@@ -84,9 +84,9 @@ describe("perceiveRingSystem – classification", () => {
 
 // ── Engine routing ────────────────────────────────────────────────────────────
 describe("engine routing – Stage 0 stubs", () => {
-  it("naphthalene → unsupported, reason mentions fused ring system", () => {
-    expect(status("c1ccc2ccccc2c1")).toBe("unsupported");
-    expect(reason("c1ccc2ccccc2c1")).toMatch(/fused ring system/i);
+  it("naphthalene → now named (Task 2 fused table implemented)", () => {
+    // Task 2 added the curated fused ring table; naphthalene is now supported.
+    expect(status("c1ccc2ccccc2c1")).toBe("named");
   });
 
   it("spiro → unsupported, reason mentions spiro", () => {
