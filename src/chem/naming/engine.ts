@@ -1679,15 +1679,15 @@ function nameBridgedRingSystem(
       const eneSuffix = eneLocs.length === 1
         ? `-${eneLocs[0]}-ene`
         : `a-${eneLocs.join(",")}-diene`;
-      finalName = buildVbPrefix(ringNameSubs) + stem + eneSuffix;
+      finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), stem + eneSuffix);
     } else {
-      finalName = buildVbPrefix(ringNameSubs) + alkaneBase;
+      finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), alkaneBase);
     }
   } else if (suffix || addedCarbon) {
     // Use assembleRingName for suffix/added-carbon
     finalName = assembleRingName({ parent: vbParent, subs: ringNameSubs, suffix, addedCarbon });
   } else {
-    finalName = buildVbPrefix(ringNameSubs) + vbParent;
+    finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), vbParent);
   }
 
   return { name: finalName, status: "named" };
@@ -1727,7 +1727,18 @@ function buildVbPrefix(subs: { locant: number; name: string }[]): string {
   const segments = parts.map(p =>
     `${p.locants.join(",")}-${multPfx(p.locants.length)}${disp(p.name)}`
   );
-  return segments.join("-") + "-";
+  return segments.join("-");
+}
+
+/**
+ * Join a substituent-prefix block to a parent. IUPAC inserts a hyphen only when
+ * the parent name starts with a digit/locant (e.g. "1-azabicyclo…" →
+ * "3-methyl-1-azabicyclo…"); a letter-initial parent ("bicyclo…") takes none
+ * ("1-methylbicyclo[2.2.2]octane").
+ */
+function joinPrefixParent(prefix: string, parent: string): string {
+  if (prefix === "") return parent;
+  return /^\d/.test(parent) ? `${prefix}-${parent}` : `${prefix}${parent}`;
 }
 
 /**
