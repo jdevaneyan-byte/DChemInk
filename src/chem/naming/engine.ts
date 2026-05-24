@@ -940,11 +940,16 @@ function nameFusedRingSystem(
   graph: MolGraph,
   ringSys: import("./ring").RingSystemInfo,
 ): NameResult {
-  // Check element support: only C, H, N, O, S allowed in fused systems for now
-  const FUSED_SUPPORTED = new Set(["C", "H", "N", "O", "S"]);
+  // Check element support: ring atoms may be C/N/O/S; exocyclic atoms may also be halogens
+  const FUSED_RING_ELEMENTS = new Set(["C", "H", "N", "O", "S"]);
+  const FUSED_EXO_ELEMENTS = new Set(["C", "H", "N", "O", "S", "F", "Cl", "Br", "I"]);
   for (const a of graph.atoms) {
-    if (!FUSED_SUPPORTED.has(a.element)) {
+    if (!FUSED_EXO_ELEMENTS.has(a.element)) {
       return { name: null, status: "unsupported", reason: `fused ring system contains ${a.element} — not yet supported in Tier 4 (Stage 2)` };
+    }
+    // Ring atoms must be C/N/O/S (no halogens in ring skeleton)
+    if (ringSys.atoms.has(a.index) && !FUSED_RING_ELEMENTS.has(a.element)) {
+      return { name: null, status: "unsupported", reason: `ring atom ${a.element} in fused system — not yet supported` };
     }
   }
 
@@ -954,10 +959,8 @@ function nameFusedRingSystem(
   const nonRingHeavy = heavy.filter(a => !ringAtoms.has(a.index));
 
   if (nonRingHeavy.length > 0) {
-    // Has exocyclic substituents → Task 3 will handle; for now decline
-    // (but Task 3 replaces this whole function, so we need a partial implementation here)
-    // For now: attempt naming, and use substituent machinery (to be filled in Task 3)
-    return nameFusedRingWithSubs();
+    // Has exocyclic substituents: route to Task 3 handler
+    return nameFusedRingWithSubs(graph, ringSys);
   }
 
   // Pure fused ring (no exocyclic substituents): look up in curated table
@@ -970,11 +973,397 @@ function nameFusedRingSystem(
 }
 
 /**
- * Name a fused ring system that has exocyclic substituents.
- * Placeholder for Task 3 machinery; currently declines.
+ * Name a fused ring system that has exocyclic substituents or functional groups.
+ * Task 3: substituents + functional groups + ring-as-substituent.
+ *
+ * Cases handled:
+ *  - Fused ring as parent: substituents/FG on ring atoms (e.g. 2-methylnaphthalene)
+ *  - Exocyclic PCG on added carbon (e.g. naphthalene-2-carboxylic acid)
+ *  - Fused ring as substituent: chain is parent (e.g. 2-(naphthalen-2-yl)acetic acid)
  */
-function nameFusedRingWithSubs(): NameResult {
-  return { name: null, status: "unsupported", reason: "fused ring system with substituents — Tier 4 (Stage 2, Task 3)" };
+function nameFusedRingWithSubs(
+  graph: MolGraph,
+  ringSys: import("./ring").RingSystemInfo,
+): NameResult {
+  const heavy = graph.atoms.filter(a => a.element !== "H");
+  const ringAtoms = ringSys.atoms;
+
+  // Perceive functional groups
+  const perception = perceiveGroups(graph);
+  if (perception.unsupported) {
+    return { name: null, status: "unsupported", reason: perception.unsupported };
+  }
+
+  // Filter out groups that are entirely inside the ring (ring heteroatoms)
+  const allGroups = perception.groups.filter(g => {
+    const allInRing = g.atoms.every(a => ringAtoms.has(a));
+    return !allInRing;
+  }).filter(g => {
+    // Ether: O between two ring atoms → ring itself; skip
+    if (g.kind === "ether" && ringAtoms.has(g.carbon) && ringAtoms.has(g.atoms[0])) return false;
+    return true;
+  });
+  const groups = allGroups;
+
+  // Verify all heteroatoms are accounted for
+  {
+    const groupAtomSet = new Set<number>();
+    for (const g of groups) for (const a of g.atoms) groupAtomSet.add(a);
+    for (const a of graph.atoms) {
+      if (a.element === "C" || a.element === "H") continue;
+      if (ringAtoms.has(a.index)) continue; // ring heteroatom (N, O, S)
+      if (!groupAtomSet.has(a.index)) {
+        const eName = { O: "oxygen", N: "nitrogen", S: "sulfur", F: "fluorine", Cl: "chlorine", Br: "bromine", I: "iodine" }[a.element] ?? a.element;
+        return { name: null, status: "unsupported", reason: `contains unclassified ${eName} — functional group not recognized` };
+      }
+    }
+  }
+
+  const pcgKind = principalKind(groups);
+
+  // Decline two-part names on fused rings (esters, acyl halides, anhydrides)
+  if (groups.some(g => isTwoPart(g.kind))) {
+    return { name: null, status: "unsupported", reason: "acid derivative on fused ring — not yet supported" };
+  }
+
+  // Check where PCG sits relative to the ring
+  let pcgOnRingAtom = false;
+  let pcgOnExocyclicC = false;
+  let pcgOnChain = false;
+  const pcgGroups = pcgKind ? groups.filter(g => g.kind === pcgKind) : [];
+
+  for (const g of pcgGroups) {
+    if (ringAtoms.has(g.carbon)) {
+      pcgOnRingAtom = true;
+    } else if (isDirectlyAttachedToRing(graph, g.carbon, ringAtoms)) {
+      pcgOnExocyclicC = true;
+    } else {
+      pcgOnChain = true;
+    }
+  }
+
+  // If PCG only on chain (not ring-adjacent) → fused ring as substituent
+  if (pcgKind && pcgOnChain && !pcgOnRingAtom && !pcgOnExocyclicC) {
+    return nameMoleculeFusedRingAsSubstituent(graph, ringSys, groups, pcgKind, pcgGroups);
+  }
+
+  // If PCG on exocyclic C but not expressible as added-carbon → ring-as-substituent path
+  if (pcgKind && pcgOnExocyclicC && !pcgOnRingAtom && pcgKindToAddedCarbon(pcgKind) === null) {
+    return nameMoleculeFusedRingAsSubstituent(graph, ringSys, groups, pcgKind, pcgGroups);
+  }
+
+  // ── Fused ring is parent ────────────────────────────────────────────────────
+
+  // Collect ring atom sets for sub/PCG atoms
+  const subRingAtoms = new Set<number>();
+  const pcgRingAtoms = new Set<number>();
+
+  if (pcgOnRingAtom) {
+    for (const g of pcgGroups) if (ringAtoms.has(g.carbon)) pcgRingAtoms.add(g.carbon);
+  }
+
+  // For exocyclic PCG carbon: find the ring atom it's attached to
+  const exocyclicPcgToRingAtom = new Map<number, number>();
+  if (pcgOnExocyclicC) {
+    for (const g of pcgGroups) {
+      if (!ringAtoms.has(g.carbon) && isDirectlyAttachedToRing(graph, g.carbon, ringAtoms)) {
+        for (const b of graph.bonds) {
+          if (b.from === g.carbon && ringAtoms.has(b.to)) { exocyclicPcgToRingAtom.set(g.carbon, b.to); break; }
+          if (b.to === g.carbon && ringAtoms.has(b.from)) { exocyclicPcgToRingAtom.set(g.carbon, b.from); break; }
+        }
+      }
+    }
+    for (const ringAtom of exocyclicPcgToRingAtom.values()) pcgRingAtoms.add(ringAtom);
+  }
+
+  // Substituent ring atoms (for all non-ring heavy neighbors of ring atoms)
+  const subMap = ringSubstituents(graph, ringAtoms);
+  for (const [ringAtom] of subMap) subRingAtoms.add(ringAtom);
+
+  // Build exo carbon graph (non-ring carbons)
+  const exoCarbonGraph = buildCarbonGraph(graph);
+  for (const idx of ringAtoms) {
+    exoCarbonGraph.carbons = exoCarbonGraph.carbons.filter(c => c !== idx);
+    exoCarbonGraph.adj.delete(idx);
+    for (const [, list] of exoCarbonGraph.adj) {
+      const i = list.indexOf(idx);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+
+  // Look up fused ring name with locant optimization
+  const naming = nameFusedRing(graph, ringSys, {
+    pcgAtoms: pcgRingAtoms.size > 0 ? pcgRingAtoms : undefined,
+    subAtoms: subRingAtoms.size > 0 ? subRingAtoms : undefined,
+  });
+  if (!naming) {
+    return { name: null, status: "unsupported", reason: "fused ring system not in curated table — Tier 4 (general fusion)" };
+  }
+
+  const { locantOf } = naming;
+  const ringNameSubs: { locant: number; name: string }[] = [];
+
+  const groupAtomSet = new Set<number>();
+  for (const g of groups) for (const a of g.atoms) groupAtomSet.add(a);
+
+  const exocyclicPcgCarbons = new Set(exocyclicPcgToRingAtom.keys());
+
+  // Non-PCG groups on ring atoms
+  const nonPcgGroups = pcgKind
+    ? groups.filter(g => SENIORITY[g.kind] < SENIORITY[pcgKind] || SENIORITY[g.kind] === 0)
+    : groups;
+
+  const accountedAtoms = new Set<number>([...ringAtoms]);
+
+  for (const g of nonPcgGroups) {
+    if (ringAtoms.has(g.carbon)) {
+      const loc = locantOf.get(g.carbon);
+      if (loc !== undefined) {
+        ringNameSubs.push({ locant: loc, name: prefixForm(g) });
+        for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+  }
+
+  // Exocyclic PCG as added-carbon suffix
+  let addedCarbon: { kind: import("./assemble").AddedCarbonSuffix; locants: number[] } | undefined;
+  if (pcgOnExocyclicC && pcgGroups.length > 0) {
+    const g = pcgGroups[0];
+    const ringAtom = exocyclicPcgToRingAtom.get(g.carbon);
+    if (ringAtom !== undefined) {
+      const loc = locantOf.get(ringAtom);
+      if (loc !== undefined) {
+        const addedKind = pcgKindToAddedCarbon(pcgKind!);
+        if (!addedKind) return { name: null, status: "unsupported", reason: `${pcgKind} not expressible as added-carbon on fused ring` };
+        addedCarbon = { kind: addedKind, locants: [loc] };
+        accountedAtoms.add(g.carbon);
+        for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+  }
+
+  // PCG directly on ring atom → suffix
+  let suffix: import("./assemble").SuffixSpec | undefined;
+  if (pcgOnRingAtom && pcgGroups.length > 0) {
+    const pcgLocs = pcgGroups
+      .filter(g => ringAtoms.has(g.carbon))
+      .map(g => locantOf.get(g.carbon)!)
+      .filter(l => l !== undefined)
+      .sort((a, b) => a - b);
+    if (pcgLocs.length > 0) {
+      suffix = { kind: toSuffixKindRing(pcgKind!), locants: pcgLocs };
+      for (const g of pcgGroups) {
+        if (ringAtoms.has(g.carbon)) for (const a of g.atoms) accountedAtoms.add(a);
+      }
+    }
+  }
+
+  // Halogens and alkyl substituents on ring atoms
+  for (const [ringAtom, exoNbrs] of subMap) {
+    for (const exoNbr of exoNbrs) {
+      if (groupAtomSet.has(exoNbr)) continue;
+      if (exocyclicPcgCarbons.has(exoNbr)) continue;
+      if (groups.some(g => g.carbon === exoNbr)) continue;
+
+      const loc = locantOf.get(ringAtom);
+      if (loc === undefined) continue;
+
+      const atom = graph.atoms.find(a => a.index === exoNbr);
+      if (!atom) continue;
+
+      if (["F", "Cl", "Br", "I"].includes(atom.element)) {
+        const halPfx: Record<string, string> = { F: "fluoro", Cl: "chloro", Br: "bromo", I: "iodo" };
+        ringNameSubs.push({ locant: loc, name: halPfx[atom.element] });
+        accountedAtoms.add(exoNbr);
+        continue;
+      }
+
+      if (atom.element === "C") {
+        const subName = nameSubstituent(exoCarbonGraph, exoNbr, ringAtom);
+        ringNameSubs.push({ locant: loc, name: subName });
+        const subAtoms = collectSubtreeAtoms(exoCarbonGraph, exoNbr, ringAtom);
+        for (const a of subAtoms) accountedAtoms.add(a);
+        continue;
+      }
+
+      return { name: null, status: "unsupported", reason: "substituent on fused ring not yet supported" };
+    }
+  }
+
+  // Completeness guard
+  if (heavy.some(a => !accountedAtoms.has(a.index))) {
+    return { name: null, status: "unsupported", reason: "fused ring: unaccounted atoms — substituent not yet supported" };
+  }
+
+  const finalName = assembleRingName({
+    parent: naming.parent,
+    subs: ringNameSubs,
+    suffix,
+    addedCarbon,
+  });
+
+  return { name: finalName, status: "named" };
+}
+
+/**
+ * Fused ring as substituent on a chain (Task 3).
+ * e.g. OC(=O)Cc1ccc2ccccc2c1 → 2-(naphthalen-2-yl)acetic acid
+ */
+function nameMoleculeFusedRingAsSubstituent(
+  graph: MolGraph,
+  ringSys: import("./ring").RingSystemInfo,
+  groups: import("./functionalGroups").Group[],
+  pcgKind: import("./functionalGroups").GroupKind,
+  pcgGroups: import("./functionalGroups").Group[],
+): NameResult {
+  const heavy = graph.atoms.filter(a => a.element !== "H");
+  const ringAtoms = ringSys.atoms;
+
+  // Look up the fused ring name (no PCG/sub hints since the ring is a substituent)
+  const naming = nameFusedRing(graph, ringSys, {});
+  if (!naming) {
+    return { name: null, status: "unsupported", reason: "fused ring system not in curated table — cannot use as substituent" };
+  }
+
+  // Find the ring-to-chain attachment bond
+  let ringAttachAtom: number | null = null;
+  let chainAttachAtom: number | null = null;
+  for (const b of graph.bonds) {
+    const fromInRing = ringAtoms.has(b.from);
+    const toInRing = ringAtoms.has(b.to);
+    if (fromInRing && !toInRing && graph.atoms.find(a => a.index === b.to)?.element === "C") {
+      ringAttachAtom = b.from; chainAttachAtom = b.to; break;
+    }
+    if (toInRing && !fromInRing && graph.atoms.find(a => a.index === b.from)?.element === "C") {
+      ringAttachAtom = b.to; chainAttachAtom = b.from; break;
+    }
+  }
+
+  if (ringAttachAtom === null || chainAttachAtom === null) {
+    return { name: null, status: "unsupported", reason: "fused ring not attached to chain via carbon" };
+  }
+
+  // Verify single ring-chain attachment
+  const ringChainBonds = graph.bonds.filter(b => {
+    const fromInRing = ringAtoms.has(b.from);
+    const toInRing = ringAtoms.has(b.to);
+    if ((fromInRing && !toInRing) || (!fromInRing && toInRing)) {
+      const exoAtom = fromInRing ? b.to : b.from;
+      return graph.atoms.find(a => a.index === exoAtom)?.element !== "H";
+    }
+    return false;
+  });
+  if (ringChainBonds.length > 1) {
+    return { name: null, status: "unsupported", reason: "multiple fused-ring to chain attachments — not supported" };
+  }
+
+  // Build fused ring substituent name: "naphthalen-2-yl"
+  const attachLocant = naming.locantOf.get(ringAttachAtom) ?? 1;
+  const parentBase = naming.parent; // e.g. "naphthalene"
+  // Drop trailing 'e' if present, add '-locant-yl'
+  const base = parentBase.endsWith("e") ? parentBase.slice(0, -1) : parentBase;
+  const ringSub = `${base}-${attachLocant}-yl`;
+
+  // Build chain carbon graph (no ring carbons)
+  const cg = buildCarbonGraph(graph);
+  for (const idx of ringAtoms) {
+    cg.carbons = cg.carbons.filter(c => c !== idx);
+    cg.adj.delete(idx);
+    for (const [, list] of cg.adj) {
+      const i = list.indexOf(idx);
+      if (i >= 0) list.splice(i, 1);
+    }
+  }
+
+  const CARBON_PREFIX = new Set<import("./functionalGroups").GroupKind>(["nitrile", "acid", "amide"]);
+  const excludedCarbons = new Set<number>();
+  if (pcgKind) {
+    for (const g of groups) {
+      if (g.kind !== pcgKind && CARBON_PREFIX.has(g.kind)) excludedCarbons.add(g.carbon);
+    }
+  }
+  if (excludedCarbons.size > 0) {
+    cg.carbons = cg.carbons.filter(c => !excludedCarbons.has(c));
+    for (const c of excludedCarbons) cg.adj.delete(c);
+    for (const [, list] of cg.adj) {
+      for (let i = list.length - 1; i >= 0; i--) if (excludedCarbons.has(list[i])) list.splice(i, 1);
+    }
+  }
+
+  const pcgCarbons = pcgGroups.map(g => g.carbon).filter(c => !ringAtoms.has(c));
+  const chain = selectPrincipalChain(cg, { pcgCarbons }).atoms;
+  const inChain = new Set(chain);
+
+  const chainPos = chain.indexOf(chainAttachAtom);
+  if (chainPos < 0) {
+    return { name: null, status: "unsupported", reason: "fused ring attachment carbon not on principal chain — not yet supported" };
+  }
+
+  // ene/yne on chain
+  const doubles: number[] = [];
+  const triples: number[] = [];
+  for (let i = 0; i < chain.length - 1; i++) {
+    const o = ccOrder(cg, chain[i], chain[i + 1]);
+    if (o === 2) doubles.push(i + 1);
+    if (o === 3) triples.push(i + 1);
+  }
+
+  const groupAtomSet = new Set<number>();
+  for (const g of groups) for (const a of g.atoms) groupAtomSet.add(a);
+
+  const subs: { locant: number; name: string }[] = [];
+  const nonPcgGroups = pcgKind
+    ? groups.filter(g => SENIORITY[g.kind] < SENIORITY[pcgKind] || SENIORITY[g.kind] === 0)
+    : groups;
+
+  for (const g of nonPcgGroups) {
+    const anchor = CARBON_PREFIX.has(g.kind)
+      ? neighborsOf(graph, g.carbon).find(n => inChain.has(n))
+      : (inChain.has(g.carbon) ? g.carbon : undefined);
+    if (anchor === undefined) continue;
+    subs.push({ locant: chain.indexOf(anchor) + 1, name: prefixForm(g) });
+  }
+
+  // Alkyl branches
+  for (let i = 0; i < chain.length; i++) {
+    for (const nb of cg.adj.get(chain[i]) ?? []) {
+      if (!inChain.has(nb) && !groupAtomSet.has(nb)) {
+        subs.push({ locant: i + 1, name: nameSubstituent(cg, nb, chain[i]) });
+      }
+    }
+  }
+
+  // Add fused ring as substituent
+  subs.push({ locant: chainPos + 1, name: ringSub });
+
+  // Completeness guard
+  const accounted = new Set<number>([...chain, ...ringAtoms]);
+  for (const g of groups) {
+    if (inChain.has(g.carbon)) for (const a of g.atoms) accounted.add(a);
+  }
+  for (const c of chain) {
+    for (const nb of cg.adj.get(c) ?? []) {
+      if (!inChain.has(nb) && !groupAtomSet.has(nb)) {
+        for (const a of branchCarbons(cg, nb, inChain)) accounted.add(a);
+      }
+    }
+  }
+  if (heavy.some(a => !accounted.has(a.index))) {
+    return { name: null, status: "unsupported", reason: "fused ring: chain/substituent not fully accounted — not yet supported" };
+  }
+
+  // Suffix
+  let suffix: import("./assemble").SuffixSpec | undefined;
+  if (pcgKind && pcgGroups.length > 0) {
+    const suffixLocants = pcgGroups
+      .map(g => chain.indexOf(g.carbon) + 1)
+      .filter(l => l > 0)
+      .sort((a, b) => a - b);
+    suffix = { kind: toSuffixKind(pcgKind), locants: suffixLocants };
+  }
+
+  const nameTxt = assembleName({ chainLen: chain.length, doubles, triples, subs, suffix });
+  return { name: nameTxt, status: "named" };
 }
 
 /**
