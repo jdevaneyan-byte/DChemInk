@@ -38,10 +38,9 @@ what's deferred. It supersedes the older week-by-week breakdown.
 - 🟡 **P1.3 Structure → name** — our own algorithmic IUPAC engine (option c),
   offline, original work re-derived from the public IUPAC recommendations.
   **Acyclic + monocyclic coverage is complete and PubChem/OPSIN-audited
-  (Tiers 1–3 below).** Remaining: **T4** fused/bridged/spiro ring systems,
-  general heterocycles (Hantzsch–Widman beyond the curated table), and
-  tautomeric/cyclic carbonyls (pyridinones, lactams, lactones — currently
-  declined, not mis-named); **T5** stereodescriptors (R/S, E/Z). Anything
+  (Tiers 1–3 + T4 Stage 1 below).** Remaining: **T4 Stage 2+** fused/bridged/spiro
+  ring systems, general heterocycles (Hantzsch–Widman beyond the curated table);
+  **T5** stereodescriptors (R/S, E/Z). Anything
   out-of-scope returns "not yet supported — <reason>" (never a wrong name).
   - **Tier 1 shipped:** acyclic hydrocarbons (chain selection, lowest-locant
     numbering, alkyl substituents, di/tri multipliers, ene/yne).
@@ -69,8 +68,13 @@ what's deferred. It supersedes the older week-by-week breakdown.
     name-string audit (round-trip only checks structure, not preferred name)
     that fixed ring-substituent locant tie-breaks, substituted-ring suffix
     locants (4-methylcyclohexan-1-ol), and declined tautomeric pyridinones.
-    Cyclic/tautomeric carbonyls (lactams, lactones, pyridinones) and 7+-membered
-    or non-tabled heterocycles are DECLINED to T4 (not mis-named).
+  - **✅ Tier 4 Stage 1 shipped (cyclic carbonyls):** saturated lactams
+    (azetidin-2-one, pyrrolidin-2-one, piperidin-2-one, azepan-2-one), saturated
+    lactones (oxetan-2-one, oxolan-2-one, oxan-2-one), and aromatic ring
+    carbonyls (pyridin-2(1H)-one, pyridin-4(1H)-one, 2H-pyran-2-one,
+    pyrimidine-2,4(1H,3H)-dione/uracil). OPSIN round-trip + PubChem-audited; 0
+    mismatches. Non-tabled or fused-ring carbonyls declined (no wrong names).
+    7+-membered or non-tabled heterocycles remain DECLINED to T4 Stage 2 (not mis-named).
   - Engine in `src/chem/naming/` (pure-TS rules engine ← `MolGraph` ← RDKit
     perception adapter), live "IUPAC" row in the Properties panel, transparent
     "not yet supported — <reason>" for out-of-tier molecules. Tier staircase
@@ -129,8 +133,9 @@ Done: ✅ P1.1, ✅ P1.2, ✅ P1.4.
 P1.3 in progress: Tier 1 (acyclic) ✅ done; Tier 2 (functional groups) ✅ done;
 Tier 2b (acid derivatives: ester/acyl halide/anhydride) ✅ done (OPSIN-audited, 100% round-trip).
 P1.3: Tiers 1–3 ✅ (acyclic + functional groups + acid derivatives + monocyclic
-rings/heterocycles); T4 (fused/bridged/spiro, general heterocycles, lactams/
-pyridinones) + T5 (stereo) remain.
+rings/heterocycles); T4 Stage 1 ✅ (cyclic carbonyls: lactams, lactones, aromatic
+ring-carbonyls/pyridinones); T4 Stage 2+ (fused/bridged/spiro, general heterocycles)
++ T5 (stereo) remain.
 Next: Tier 3 (rings) → then P2.2 (smart selection) → P2.1
 (command palette) → P3.1 (export) → P2.3 (nicknames) → P3.3 (PWA) →
 P3.2 (journal styles) → P4.1 (lookup) → P4.2 (reaction UI + auto-group/lock)

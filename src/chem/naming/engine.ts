@@ -727,18 +727,18 @@ function nameAromaticRingCarbonyl(
     .filter((l): l is number => l !== undefined)
     .sort((a, b) => a - b);
 
-  // e-elision for the parent stem
-  const parentStem = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
-
   // ── Case A/B: N-heterocycle with N-H indicated hydrogen (pyridinone, uracil) ──
   if (indicatedHLocs.length > 0) {
     const indicatedHStr = indicatedHLocs.map(l => `${l}H`).join(",");
     let nameTxt: string;
     if (carbonylLocs.length === 1) {
-      nameTxt = `${parentStem}-${carbonylLocs[0]}(${indicatedHStr})-one`;
+      // suffix "-one" starts with vowel → apply e-elision (pyridine → pyridin-2(1H)-one)
+      const stem = parentName.endsWith("e") ? parentName.slice(0, -1) : parentName;
+      nameTxt = `${stem}-${carbonylLocs[0]}(${indicatedHStr})-one`;
     } else {
+      // suffix "-dione"/"-trione" starts with consonant → no e-elision (pyrimidine-2,4(1H,3H)-dione)
       const multPfx = carbonylLocs.length === 2 ? "di" : carbonylLocs.length === 3 ? "tri" : "";
-      nameTxt = `${parentStem}-${carbonylLocs.join(",")}(${indicatedHStr})-${multPfx}one`;
+      nameTxt = `${parentName}-${carbonylLocs.join(",")}(${indicatedHStr})-${multPfx}one`;
     }
     return { name: nameTxt, status: "named" };
   }

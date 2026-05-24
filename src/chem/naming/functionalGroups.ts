@@ -197,10 +197,12 @@ export function perceiveGroups(graph: MolGraph): Perception {
     // (urea N-C(=O)-N, carbamate N-C(=O)-O, carbonate O-C(=O)-O, carbamic acid)
     // Note: anhydrides are already handled above (they carry a bridge O to another carbonyl),
     // so by this point a singleO here connects to a non-carbonyl C only.
+    // EXCEPTION: ring C atoms (ringIds.length > 0) are NOT acyclic carbonyl derivatives.
+    // Cyclic examples (lactam/uracil-type) are handled by the ring naming path (T4 Stage 1).
     const heteroSingles = otherNbs.filter(
       (b) => b.order === 1 && ["O", "N"].includes(atomsById.get(b.to)?.element ?? ""),
     );
-    if (heteroSingles.length >= 2) {
+    if (heteroSingles.length >= 2 && atom.ringIds.length === 0) {
       return {
         groups: [],
         unsupported: "contains a carbonic-acid derivative (urea/carbamate/…) — not yet supported",

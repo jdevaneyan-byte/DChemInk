@@ -74,6 +74,23 @@ test.describe("IUPAC name row (structure → name)", () => {
     );
   });
 
+  // ── Tier 4 Stage 1: cyclic carbonyls ─────────────────────────────────────
+  test("names pyrrolidin-2-one (O=C1CCCN1 — lactam)", async ({ page }) => {
+    await page.evaluate(() => window.ketcher!.setMolecule("O=C1CCCN1"));
+    await expect(page.getByTestId("prop-iupac-value")).toHaveText(
+      /^pyrrolidin-2-one/,
+      { timeout: 5_000 },
+    );
+  });
+
+  test("names pyrimidine-2,4(1H,3H)-dione (O=c1cc[nH]c(=O)[nH]1 — uracil)", async ({ page }) => {
+    await page.evaluate(() => window.ketcher!.setMolecule("O=c1cc[nH]c(=O)[nH]1"));
+    await expect(page.getByTestId("prop-iupac-value")).toHaveText(
+      /^pyrimidine-2,4\(1H,3H\)-dione/,
+      { timeout: 5_000 },
+    );
+  });
+
   // ── Rejections ────────────────────────────────────────────────────────────
   test("reports a ring as not yet supported", async ({ page }) => {
     await page.evaluate(() => window.ketcher!.setMolecule("c1ccccc1"));

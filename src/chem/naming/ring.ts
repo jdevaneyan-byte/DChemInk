@@ -368,8 +368,16 @@ const HETERO_TABLE: HeteroEntry[] = [
     // S(1)-C-N(3)-C-C
     elementSeqs: [["S", "C", "N", "C", "C"]],
   },
-  // ── Aromatic 6-membered (O) = 2H-pyran (non-aromatic) / handled below ──
-  // 2H-pyran is not aromatic; skip for aromatic table
+  // ── Mancude 6-membered (O) = pyran — used for 2H-pyran-2-one parent lookup ──
+  // "Pyran" itself is not a stable aromatic compound but the aromatic fingerprint
+  // [O,ar,C,ar,...] is used in nameAromaticRingCarbonyl for pyranone naming.
+  // We store it with aromatic=true so the forced-aromatic ring lookup finds it.
+  {
+    name: "pyran",
+    size: 6,
+    aromatic: true,
+    elementSeqs: [["O", "C", "C", "C", "C", "C"]],
+  },
 
   // ── Saturated 3-membered ──
   {
