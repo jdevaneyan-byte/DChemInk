@@ -37,10 +37,6 @@ function name(smiles: string): string | null {
   return nameMolecule(graph(smiles)).name;
 }
 
-function status(smiles: string) {
-  return nameMolecule(graph(smiles)).status;
-}
-
 // ── perceiveRingSystem sanity ──────────────────────────────────────────────────
 
 describe("T4S3 Task1 – perceiveRingSystem: bridged classification", () => {

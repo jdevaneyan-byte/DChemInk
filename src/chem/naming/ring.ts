@@ -2118,9 +2118,9 @@ export function nameVonBaeyer(
   // We generate all orderings of the bridges where bridge sizes allow it (equal lengths).
   // Since c may differ from a,b, we only permute among equal-length bridges.
 
-  function generateBridgeOrderings(): [number[][], number[][], number[][]][] {
+  function generateBridgeOrderings(): [number[], number[], number[]][] {
     // Returns list of [bA_candidate, bB_candidate, bC_candidate]
-    const orderings: [number[][], number[][], number[][]][] = [];
+    const orderings: [number[], number[], number[]][] = [];
 
     // Collect all possible bridge orderings (a≥b≥c constraint → only swap equal ones)
     const allBridges = [bA, bB, bC];
@@ -2173,7 +2173,6 @@ export function nameVonBaeyer(
       // use forward; if the last atom connects to startBH, use reversed.
       // Check which end of bridgeA is adjacent to startBH in the ring graph.
       const aStart = bridgeA[0];
-      const aEnd = bridgeA[bridgeA.length - 1];
       const aPath = adjacentInRing(startBH, aStart) ? bridgeA : [...bridgeA].reverse();
       for (const a of aPath) m.set(a, locNum++);
 
@@ -2233,7 +2232,7 @@ export function nameVonBaeyer(
   });
 
   // Build heteroatom prefix (e.g. "1-aza", "2-oxa", "1,4-diaza")
-  let heteroPrefix = "";
+  let heteroPrefix: string;
   if (heteroEntries.length > 0) {
     // Group by element
     const byEl = new Map<string, number[]>();

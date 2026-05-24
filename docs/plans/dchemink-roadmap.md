@@ -75,6 +75,17 @@ what's deferred. It supersedes the older week-by-week breakdown.
     pyrimidine-2,4(1H,3H)-dione/uracil). OPSIN round-trip + PubChem-audited; 0
     mismatches. Non-tabled or fused-ring carbonyls declined (no wrong names).
     7+-membered or non-tabled heterocycles remain DECLINED to T4 Stage 2 (not mis-named).
+  - **✅ Tier 4 Stage 3 shipped (von Baeyer bridged ring systems):** bicyclo[a.b.c]alkane
+    naming for all standard bicyclics (norbornane bicyclo[2.2.1]heptane,
+    bicyclo[2.2.2]octane, bicyclo[1.1.1]pentane, bicyclo[3.2.2]nonane, etc.);
+    heteroatom replacement (aza/oxa/thia with correct locants: quinuclidine
+    1-azabicyclo[2.2.2]octane, DABCO 1,4-diazabicyclo[2.2.2]octane, 2-oxa/2-thia
+    variants); ene-suffix for bridged unsaturated systems (norbornene
+    bicyclo[2.2.1]hept-2-ene); curated adamantane fingerprint recognition.
+    General tricyclic+ (non-adamantane), spiro, and ring assemblies remain DECLINED.
+    OPSIN round-trip audited: 12 bridged names parsed → structural identity confirmed;
+    2 e2e tests (norbornane, quinuclidine) full SMILES→name→OPSIN→canonical-key round-trip.
+    PubChem-verified before every assertion. 0 wrong names.
   - Engine in `src/chem/naming/` (pure-TS rules engine ← `MolGraph` ← RDKit
     perception adapter), live "IUPAC" row in the Properties panel, transparent
     "not yet supported — <reason>" for out-of-tier molecules. Tier staircase
@@ -134,8 +145,12 @@ P1.3 in progress: Tier 1 (acyclic) ✅ done; Tier 2 (functional groups) ✅ done
 Tier 2b (acid derivatives: ester/acyl halide/anhydride) ✅ done (OPSIN-audited, 100% round-trip).
 P1.3: Tiers 1–3 ✅ (acyclic + functional groups + acid derivatives + monocyclic
 rings/heterocycles); T4 Stage 1 ✅ (cyclic carbonyls: lactams, lactones, aromatic
-ring-carbonyls/pyridinones); T4 Stage 2+ (fused/bridged/spiro, general heterocycles)
-+ T5 (stereo) remain.
+ring-carbonyls/pyridinones); T4 Stage 2 ✅ (fused aromatic/heteroaromatic ring
+systems: naphthalene, quinoline, indole, purine, anthracene, phenanthrene + substituted
+variants); T4 Stage 3 ✅ (von Baeyer bridged ring systems: bicyclo[a.b.c]alkanes,
+heteroatom replacement, ene suffix, curated adamantane).
+Remaining: T4 Stage 4+ (decalin/fused saturated, spiro nomenclature, general
+heterocycles Hantzsch–Widman beyond curated table) + T5 (stereo) remain.
 Next: Tier 3 (rings) → then P2.2 (smart selection) → P2.1
 (command palette) → P3.1 (export) → P2.3 (nicknames) → P3.3 (PWA) →
 P3.2 (journal styles) → P4.1 (lookup) → P4.2 (reaction UI + auto-group/lock)

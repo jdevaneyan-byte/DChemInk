@@ -31,10 +31,6 @@ function name(smiles: string): string | null {
   return nameMolecule(graph(smiles)).name;
 }
 
-function status(smiles: string) {
-  return nameMolecule(graph(smiles)).status;
-}
-
 // ── Adamantane fingerprint ─────────────────────────────────────────────────────
 
 describe("T4S3 Task3 – isAdamantane fingerprint", () => {
