@@ -468,7 +468,12 @@ export function assembleRingName(input: RingAssemblyInput): string {
   const hasSuffix = !!suffix || !!addedCarbon;
   const hasRingUnsaturation = !!(ringDoubleBondLocants && ringDoubleBondLocants.length > 0);
   const pfx = prefixSegmentRing(subs, isHeteroCycleParent || hasSuffix || hasRingUnsaturation);
-  return `${pfx}${baseName}`;
+  // Bug 1 fix: when baseName starts with a digit (e.g. "1H-indole", "7H-purine",
+  // "2H-chromene"), IUPAC requires a hyphen between the prefix block and the parent.
+  // e.g. "2-methyl" + "1H-indole" → "2-methyl-1H-indole" (not "2-methyl1H-indole").
+  // A letter-initial parent (naphthalene, quinoline) needs no extra hyphen.
+  const needsHyphen = pfx.length > 0 && /^\d/.test(baseName);
+  return needsHyphen ? `${pfx}-${baseName}` : `${pfx}${baseName}`;
 }
 
 /**

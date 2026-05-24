@@ -1195,8 +1195,20 @@ function nameFusedRingWithSubs(
     return { name: null, status: "unsupported", reason: "fused ring: unaccounted atoms — substituent not yet supported" };
   }
 
+  // If the indicated-H position has a substituent, drop the "nH-" prefix.
+  // e.g. 1-methylindole: parent "1H-indole" + methyl at position 1 → parent "indole"
+  let resolvedParent = naming.parent;
+  if (naming.indicatedH !== null) {
+    const iHLoc = naming.indicatedH;
+    const hasSubAtIH = ringNameSubs.some(s => s.locant === iHLoc);
+    if (hasSubAtIH) {
+      // Remove the "nH-" prefix (handles "1H-", "7H-", "2H-", etc.)
+      resolvedParent = naming.parent.replace(/^\d+H-/, "");
+    }
+  }
+
   const finalName = assembleRingName({
-    parent: naming.parent,
+    parent: resolvedParent,
     subs: ringNameSubs,
     suffix,
     addedCarbon,

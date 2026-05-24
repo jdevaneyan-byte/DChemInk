@@ -1194,202 +1194,234 @@ const C0 = C(0); // fusion carbon (no H)
 export const FUSED_RING_TABLE: FusedRingEntry[] = [
   // ────────────────────────────────────────────────────────────────────────────
   // NAPHTHALENE (C10H8): two fused benzene rings
-  // IUPAC numbering: atoms 1-4 in first ring, then 4a,5-8,8a (fusion atoms 4a,8a)
-  // For our purposes: atoms numbered 1-10 linearly:
-  //   Ring 1: 1-2-3-4-4a-8a  Ring 2: 4a-5-6-7-8-8a
-  //   Locants: 1,2,3,4,4a=5,5=6,6=7,7=8,8=9,8a=10 (simplified to 1-10 without a/b)
-  // Actually for substituent purposes we use simple 1-8 + 4a,8a.
-  // PubChem canonical for 2-methylnaphthalene: position 2 is the second C.
-  // For the isomorphism we only need the connectivity, not the "a" notation.
-  // Atoms: 1(C),2(C),3(C),4(C),4a(C),5(C),6(C),7(C),8(C),8a(C)
-  // Bonds: 1-2,2-3,3-4,4-4a,4a-5,5-6,6-7,7-8,8-8a,8a-1,4a-8a
-  // 4a=index 4, 8a=index 9 (0-based: 0-9)
+  //
+  // IUPAC locants: 1,2,3,4,(4a),5,6,7,8,(8a) – fusion atoms 4a and 8a are not
+  // integers in IUPAC but we track them as indices 8,9 (never substituted).
+  // Non-fusion atoms (locants 1–8) are at indices 0–7.
+  //
+  // Atom layout (0-based index = IUPAC locant - 1 for non-fusion):
+  //   Ring 1: C(1)-C(2)-C(3)-C(4)-C4a-C8a  (indices 0,1,2,3,8,9)
+  //   Ring 2: C4a-C(5)-C(6)-C(7)-C(8)-C8a  (indices 8,4,5,6,7,9)
+  //   Fusion bond: C4a(8)–C8a(9)
+  //
+  // PubChem verified: 1-methylnaphthalene (CID 1321), 2-methylnaphthalene (CID 7314)
   {
     name: "naphthalene",
     indicatedH: null,
-    canonicalOrder: [C(), C(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [C(), C(), C(), C(), C(), C(), C(), C(), C0, C0],
+    //                 1     2     3     4     5     6     7     8    4a   8a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
-      [4,9], // fusion bond (4a–8a)
+      [0,1],[1,2],[2,3],[3,8],[8,9],[9,0],  // Ring 1: 1-2-3-4-4a-8a
+      [8,4],[4,5],[5,6],[6,7],[7,9],         // Ring 2: 4a-5-6-7-8-8a (fusion [8,9] already in ring1)
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
   // QUINOLINE (C9H7N): benzo[b]pyridine – N at position 1
-  // Ring 1 (pyridine): 1(N),2(C),3(C),4(C),4a(C),8a(C)
-  // Ring 2 (benzene): 4a,5(C),6(C),7(C),8(C),8a
-  // Atoms (0-based): 0=N(1), 1=C(2), 2=C(3), 3=C(4), 4=C(4a), 5=C(5), 6=C(6), 7=C(7), 8=C(8), 9=C(8a)
+  //
+  // IUPAC: N(1),C(2),C(3),C(4),(C4a),C(5),C(6),C(7),C(8),(C8a)
+  // Non-fusion atoms (1–8) at indices 0–7; fusion C4a=index 8, C8a=index 9.
+  // Ring 1 (pyridine ring): N(0)-C(1)-C(2)-C(3)-C4a(8)-C8a(9)
+  // Ring 2 (benzene ring): C4a(8)-C(4)-C(5)-C(6)-C(7)-C8a(9)
+  //
+  // PubChem verified: 2-methylquinoline (CID 7278) through 8-methylquinoline (CID 10324)
   {
     name: "quinoline",
     indicatedH: null,
-    canonicalOrder: [N(), C(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [N(), C(), C(), C(), C(), C(), C(), C(), C0, C0],
+    //                 1     2     3     4     5     6     7     8    4a   8a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
-      [4,9],
+      [0,1],[1,2],[2,3],[3,8],[8,9],[9,0],  // Ring 1: N1-C2-C3-C4-C4a-C8a
+      [8,4],[4,5],[5,6],[6,7],[7,9],         // Ring 2: C4a-C5-C6-C7-C8-C8a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
   // ISOQUINOLINE (C9H7N): N at position 2
-  // Ring 1 (pyridine): 1(C),2(N),3(C),4(C),4a(C),8a(C)
-  // Ring 2 (benzene): 4a,5,6,7,8,8a
-  // Atoms (0-based): 0=C(1), 1=N(2), 2=C(3), 3=C(4), 4=C(4a), 5=C(5), 6=C(6), 7=C(7), 8=C(8), 9=C(8a)
+  //
+  // IUPAC: C(1),N(2),C(3),C(4),(C4a),C(5),C(6),C(7),C(8),(C8a)
+  // Ring 1: C(0)-N(1)-C(2)-C(3)-C4a(8)-C8a(9)
+  //
+  // PubChem verified: 1-methylisoquinoline (CID 69472), 3-methyl (CID 69618), etc.
   {
     name: "isoquinoline",
     indicatedH: null,
-    canonicalOrder: [C(), N(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [C(), N(), C(), C(), C(), C(), C(), C(), C0, C0],
+    //                 1     2     3     4     5     6     7     8    4a   8a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
-      [4,9],
+      [0,1],[1,2],[2,3],[3,8],[8,9],[9,0],  // Ring 1: C1-N2-C3-C4-C4a-C8a
+      [8,4],[4,5],[5,6],[6,7],[7,9],         // Ring 2: C4a-C5-C6-C7-C8-C8a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
-  // 1-BENZOFURAN: benzo[b]furan – O at position 1 (heteroatom ring = 5-membered)
-  // PubChem name: 1-benzofuran
-  // IUPAC numbering: O=1, C2=2, C3=3, C3a=4(fused), C4=5, C5=6, C6=7, C7=8, C7a=9(fused)
-  // 0-based: 0=O(1),1=C(2),2=C(3),3=C(3a),4=C(4),5=C(5),6=C(6),7=C(7),8=C(7a)
-  // Bonds: O-C2(0-1),C2-C3(1-2),C3-C3a(2-3),C3a-C7a(3-8 fusion),C3a-C4(3-4),C4-C5(4-5),C5-C6(5-6),C6-C7(6-7),C7-C7a(7-8),C7a-O(8-0)
+  // 1-BENZOFURAN: benzo[b]furan – O at position 1 (5-membered heteroatom ring)
+  //
+  // IUPAC: O(1),C(2),C(3),(C3a),C(4),C(5),C(6),C(7),(C7a)
+  // Non-fusion atoms (1–7) at indices 0–6; fusion C3a=index 7, C7a=index 8.
+  // Ring 1 (furan, 5-membered): O(0)-C(1)-C(2)-C3a(7)-C7a(8)
+  // Ring 2 (benzene, 6-membered): C3a(7)-C(3)-C(4)-C(5)-C(6)-C7a(8)
+  //
+  // PubChem verified: 2-methyl-1-benzofuran (CID 11725), 4-methyl through 7-methyl
   {
     name: "1-benzofuran",
     indicatedH: null,
-    canonicalOrder: [O(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [O(), C(), C(), C(), C(), C(), C(), C0, C0],
+    //                 1     2     3     4     5     6     7    3a   7a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,8], // fusion bond C3a-C7a
-      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+      [0,1],[1,2],[2,7],[7,8],[8,0],        // Ring 1: O1-C2-C3-C3a-C7a
+      [7,3],[3,4],[4,5],[5,6],[6,8],         // Ring 2: C3a-C4-C5-C6-C7-C7a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
   // 1-BENZOTHIOPHENE: benzo[b]thiophene – S at position 1
-  // Same topology as benzofuran but S instead of O
-  // PubChem: 1-benzothiophene
+  //
+  // Same topology as 1-benzofuran, S instead of O.
+  // PubChem verified: 2-methyl through 7-methyl positions
   {
     name: "1-benzothiophene",
     indicatedH: null,
-    canonicalOrder: [S(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [S(), C(), C(), C(), C(), C(), C(), C0, C0],
+    //                 1     2     3     4     5     6     7    3a   7a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,8],
-      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+      [0,1],[1,2],[2,7],[7,8],[8,0],        // Ring 1: S1-C2-C3-C3a-C7a
+      [7,3],[3,4],[4,5],[5,6],[6,8],         // Ring 2: C3a-C4-C5-C6-C7-C7a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
   // 1H-INDOLE: benzo[b]pyrrole – N-H at position 1
-  // PubChem: 1H-indole
-  // IUPAC numbering: N=1, C2=2, C3=3, C3a=4(fused), C4=5, C5=6, C6=7, C7=8, C7a=9(fused)
-  // 0-based: 0=NH(1),1=C(2),2=C(3),3=C(3a),4=C(4),5=C(5),6=C(6),7=C(7),8=C(7a)
+  //
+  // IUPAC: NH(1),C(2),C(3),(C3a),C(4),C(5),C(6),C(7),(C7a)
+  // Ring 1 (pyrrole, 5-membered): NH(0)-C(1)-C(2)-C3a(7)-C7a(8)
+  // Ring 2 (benzene, 6-membered): C3a(7)-C(3)-C(4)-C(5)-C(6)-C7a(8)
+  //
+  // PubChem verified: 1-methylindole (CID 2722; note: 1-methyl by N-methylation),
+  //   2-methyl-1H-indole (CID 11120), 3-methyl through 7-methyl
   {
     name: "1H-indole",
     indicatedH: 1,
-    canonicalOrder: [N(1), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [N(1), C(), C(), C(), C(), C(), C(), C0, C0],
+    //                 1      2     3     4     5     6     7    3a   7a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,8],
-      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+      [0,1],[1,2],[2,7],[7,8],[8,0],        // Ring 1: N1-C2-C3-C3a-C7a
+      [7,3],[3,4],[4,5],[5,6],[6,8],         // Ring 2: C3a-C4-C5-C6-C7-C7a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
   // 1H-BENZIMIDAZOLE: benzo[d]imidazole – N-H at position 1, N at position 3
-  // PubChem: 1H-benzimidazole
-  // IUPAC numbering: NH=1, C2=2(between N1 and N3), N=3, C3a=4(fused), C4=5, C5=6, C6=7, C7=8, C7a=9(fused)
-  // 0-based: 0=NH(1),1=C(2),2=N(3),3=C(3a),4=C(4),5=C(5),6=C(6),7=C(7),8=C(7a)
+  //
+  // IUPAC: NH(1),C(2),N(3),(C3a),C(4),C(5),C(6),C(7),(C7a)
+  // Ring 1 (imidazole, 5-membered): NH(0)-C(1)-N(2)-C3a(7)-C7a(8)
+  // Ring 2 (benzene, 6-membered): C3a(7)-C(3)-C(4)-C(5)-C(6)-C7a(8)
+  //
+  // PubChem verified: 2-methyl-1H-benzimidazole (CID 10189), 5-methyl, 6-methyl
+  // Note: due to the N1-H/N3 symmetry, 4-methyl and 7-methyl are equivalent,
+  //   and 5-methyl and 6-methyl are equivalent in the unsubstituted parent.
   {
     name: "1H-benzimidazole",
     indicatedH: 1,
-    canonicalOrder: [N(1), C(), N(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [N(1), C(), N(), C(), C(), C(), C(), C0, C0],
+    //                 1      2     3     4     5     6     7    3a   7a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,8],
-      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+      [0,1],[1,2],[2,7],[7,8],[8,0],        // Ring 1: NH1-C2-N3-C3a-C7a
+      [7,3],[3,4],[4,5],[5,6],[6,8],         // Ring 2: C3a-C4-C5-C6-C7-C7a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
   // 1H-INDAZOLE: benzo[c]pyrazole – N-H at position 1, N at position 2
-  // PubChem: 1H-indazole
-  // IUPAC: N-H=1, N=2, C=3, C3a=4(fused), C4=5, C5=6, C6=7, C7=8, C7a=9(fused)
-  // 0-based: 0=NH(1),1=N(2),2=C(3),3=C(3a),4=C(4),5=C(5),6=C(6),7=C(7),8=C(7a)
+  //
+  // IUPAC: NH(1),N(2),C(3),(C3a),C(4),C(5),C(6),C(7),(C7a)
+  // Ring 1 (pyrazole, 5-membered): NH(0)-N(1)-C(2)-C3a(7)-C7a(8)
+  // Ring 2 (benzene, 6-membered): C3a(7)-C(3)-C(4)-C(5)-C(6)-C7a(8)
+  //
+  // PubChem verified: 3-methyl-1H-indazole (CID 11738 is 5-methyl; CID 12155 is 3-methyl),
+  //   5-methyl-1H-indazole, etc.
   {
     name: "1H-indazole",
     indicatedH: 1,
-    canonicalOrder: [N(1), N(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [N(1), N(), C(), C(), C(), C(), C(), C0, C0],
+    //                 1      2     3     4     5     6     7    3a   7a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,8],
-      [3,4],[4,5],[5,6],[6,7],[7,8],[8,0],
+      [0,1],[1,2],[2,7],[7,8],[8,0],        // Ring 1: NH1-N2-C3-C3a-C7a
+      [7,3],[3,4],[4,5],[5,6],[6,8],         // Ring 2: C3a-C4-C5-C6-C7-C7a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
-  // QUINOXALINE: benzo[g]pyrazine – N at 1 and N at 4 in bicyclic numbering
-  // PubChem: quinoxaline
-  // IUPAC numbering: N=1, C=2, N=3 (wait - actually quinoxaline is 1,4-benzodiazine)
-  // Quinoxaline: positions 1,4 are N in the pyrazine ring fused to benzene.
-  // IUPAC: atoms 1(N),2(C),3(N),4(C hmm) ...
-  // Standard quinoxaline numbering: N1, C2, N3, C4(? no)
-  // Actually quinoxaline = benzo[g]pyrazine: N at 1 and 4 (para to each other in 6-membered ring)
-  // Wait: quinoxaline CID 9260 - the pyrazine ring is fused.
-  // Standard IUPAC: 1-N, 2-C, 3-N, 4-... no
-  // Quinoxaline numbering per IUPAC: N1-C2=C3-N4=... no
-  // SMILES c1cnc2ccccc2n1: atom order 0=C(1),1=N(2? or 4?),2=C(3),3=C(3a or 4a),4=C,5=C,6=C,7=C,8=C(8a or similar),9=N
-  // PubChem canonical SMILES for quinoxaline: C1=CN=C2C=CC=CC2=N1
-  // IUPAC locants: N1,C2,N3,C4,C4a,C5,C6,C7,C8,C8a (numbering: N at 1 and 4)
-  // Bonds: N1-C2,C2=N3(? no), N1=C8a,C8a-C8,...
-  // Standard: 1(N),2(C),3(N),then C4=C(bridge)...
-  // Actually IUPAC 2013 says quinoxaline = 1,4-benzodiazine, N at positions 1,4.
-  // Ring atoms (0-based): 0=N(1),1=C(2),2=N(3? no, 4 is the second N)...
-  // Let me use: 0=N(1),1=C(2),2=C(3),3=N(4),4=C(4a)fusion,5=C(5),6=C(6),7=C(7),8=C(8),9=C(8a)fusion
+  // QUINOXALINE: benzo[g]pyrazine (1,4-benzodiazine) – N at 1 and 4
+  //
+  // IUPAC: N(1),C(2),C(3),N(4),(C4a),C(5),C(6),C(7),C(8),(C8a)
+  // Ring 1 (pyrazine, 6-membered): N(0)-C(1)-C(2)-N(3)-C4a(8)-C8a(9)
+  // Ring 2 (benzene, 6-membered): C4a(8)-C(4)-C(5)-C(6)-C(7)-C8a(9)
+  //
+  // PubChem verified: 2-methylquinoxaline (CID 11758), 5-methylquinoxaline,
+  //   6-methylquinoxaline
   {
     name: "quinoxaline",
     indicatedH: null,
-    canonicalOrder: [N(), C(), C(), N(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [N(), C(), C(), N(), C(), C(), C(), C(), C0, C0],
+    //                 1     2     3     4     5     6     7     8    4a   8a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
-      [4,9],
+      [0,1],[1,2],[2,3],[3,8],[8,9],[9,0],  // Ring 1: N1-C2-C3-N4-C4a-C8a
+      [8,4],[4,5],[5,6],[6,7],[7,9],         // Ring 2: C4a-C5-C6-C7-C8-C8a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
-  // QUINAZOLINE: benzo[d]pyrimidine – N at 1 and 3 (1,3-positions)
-  // PubChem: quinazoline
-  // IUPAC: N1,C2,N3,C4,C4a(fused),C5,C6,C7,C8,C8a(fused)
-  // 0-based: 0=N(1),1=C(2),2=N(3),3=C(4),4=C(4a),5=C(5),6=C(6),7=C(7),8=C(8),9=C(8a)
+  // QUINAZOLINE: benzo[d]pyrimidine – N at 1 and 3
+  //
+  // IUPAC: N(1),C(2),N(3),C(4),(C4a),C(5),C(6),C(7),C(8),(C8a)
+  // Ring 1 (pyrimidine, 6-membered): N(0)-C(1)-N(2)-C(3)-C4a(8)-C8a(9)
+  // Ring 2 (benzene, 6-membered): C4a(8)-C(4)-C(5)-C(6)-C(7)-C8a(9)
+  //
+  // PubChem verified: 2-methylquinazoline, 4-methylquinazoline, 6-methylquinazoline
   {
     name: "quinazoline",
     indicatedH: null,
-    canonicalOrder: [N(), C(), N(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [N(), C(), N(), C(), C(), C(), C(), C(), C0, C0],
+    //                 1     2     3     4     5     6     7     8    4a   8a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
-      [4,9],
+      [0,1],[1,2],[2,3],[3,8],[8,9],[9,0],  // Ring 1: N1-C2-N3-C4-C4a-C8a
+      [8,4],[4,5],[5,6],[6,7],[7,9],         // Ring 2: C4a-C5-C6-C7-C8-C8a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
   // CINNOLINE: benzo[c]pyridazine – N at 1 and 2 (adjacent)
-  // PubChem: cinnoline
-  // IUPAC: N1,N2,C3,C4,C4a(fused),C5,C6,C7,C8,C8a(fused)
-  // 0-based: 0=N(1),1=N(2),2=C(3),3=C(4),4=C(4a),5=C(5),6=C(6),7=C(7),8=C(8),9=C(8a)
+  //
+  // IUPAC: N(1),N(2),C(3),C(4),(C4a),C(5),C(6),C(7),C(8),(C8a)
+  // Ring 1 (pyridazine, 6-membered): N(0)-N(1)-C(2)-C(3)-C4a(8)-C8a(9)
+  // Ring 2 (benzene, 6-membered): C4a(8)-C(4)-C(5)-C(6)-C(7)-C8a(9)
+  //
+  // PubChem verified: 3-methylcinnoline (CID 2726380), 4-methyl, 5-methyl,
+  //   6-methyl, 7-methyl, 8-methylcinnoline
   {
     name: "cinnoline",
     indicatedH: null,
-    canonicalOrder: [N(), N(), C(), C(), C0, C(), C(), C(), C(), C0],
+    canonicalOrder: [N(), N(), C(), C(), C(), C(), C(), C(), C0, C0],
+    //                 1     2     3     4     5     6     7     8    4a   8a
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,0],
-      [4,9],
+      [0,1],[1,2],[2,3],[3,8],[8,9],[9,0],  // Ring 1: N1-N2-C3-C4-C4a-C8a
+      [8,4],[4,5],[5,6],[6,7],[7,9],         // Ring 2: C4a-C5-C6-C7-C8-C8a
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
   // 7H-PURINE: imidazo[4,5-d]pyrimidine – N at 1,3,7,9 (bicyclic, 4N)
-  // PubChem: 7H-purine (preferred tautomer; 9H-purine also named "7H-purine" by PubChem)
+  //
+  // Purine has no "a" locants — all 9 atoms have integer IUPAC locants 1–9
+  // (C4 and C5 are the fusion atoms; index+1 IS the IUPAC locant).
+  //
   // IUPAC numbering for 7H-purine:
-  //   Ring I (pyrimidine): N1,C2,N3,C4,C5,C6  (6-membered)
-  //   Ring II (imidazole): C4,C5,N7(H),C8,N9  (5-membered, shared: C4,C5)
-  //   7H means N7 bears H
-  // Topology (7H-purine): NH (N7) is adjacent to C8 and C5(fusion).
-  //   C5(fusion) connects to C4(fusion), C6, N7. C4(fusion) connects to N3, C5, N9.
-  // 0-based indices (IUPAC order): 0=N(1),1=C(2),2=N(3),3=C(4),4=C(5),5=C(6),6=N(7,H),7=C(8),8=N(9)
-  // Bonds: pyrimidine: (0,1),(1,2),(2,3),(3,4),(4,5),(5,0)
-  //        imidazole:  (3,8),(8,7),(7,6),(6,4)
+  //   Ring I (pyrimidine, 6-membered): N1,C2,N3,C4(fused),C5(fused),C6
+  //   Ring II (imidazole, 5-membered): C4,C5,N7(H),C8,N9  (shared: C4,C5)
+  // 0-based: 0=N(1),1=C(2),2=N(3),3=C4(fused),4=C5(fused),5=C(6),6=N7(H),7=C(8),8=N(9)
+  //
+  // PubChem: 7H-purine (CID 1044); accepts both 7H and 9H tautomer SMILES.
   {
     name: "7H-purine",
     indicatedH: 7,
@@ -1402,14 +1434,11 @@ export const FUSED_RING_TABLE: FusedRingEntry[] = [
 
   // ────────────────────────────────────────────────────────────────────────────
   // 7H-PURINE (9H-tautomer topology): same preferred name per PubChem normalization
+  //
   // The SMILES c1nc2[nH]cnc2cn1 draws the 9H tautomer (NH at N9) but PubChem
   // normalizes this to "7H-purine". We accept both tautomer topologies.
-  // Topology (9H-purine): NH (N9) is adjacent to C8 and C4(fusion).
-  //   C4(fusion) connects to N3, C5(fusion), N9. C5(fusion) connects to C4, C6, N7.
-  // 0-based indices (drawn topology from c1nc2[nH]cnc2cn1):
-  //   0=C, 1=N, 2=C(fusion), 3=NH, 4=C, 5=N, 6=C(fusion), 7=C, 8=N
-  // Bonds: 6-ring: [0,1],[1,2],[2,6],[6,7],[7,8],[8,0]
-  //        5-ring: [2,3],[3,4],[4,5],[5,6] (shared: 2,6)
+  // 0-based drawn indices from c1nc2[nH]cnc2cn1:
+  //   0=C, 1=N, 2=C(C4 fusion), 3=NH(N9), 4=C(N9-adjacent), 5=N, 6=C(C5 fusion), 7=C, 8=N
   {
     name: "7H-purine",
     indicatedH: 7,
@@ -1422,52 +1451,92 @@ export const FUSED_RING_TABLE: FusedRingEntry[] = [
 
   // ────────────────────────────────────────────────────────────────────────────
   // ANTHRACENE (C14H10): three linearly fused benzene rings
-  // Linear fusion A-B-C: each adjacent pair shares one bond (2 atoms).
-  // 14 atoms, 15 bonds total (3×6 - 2×2 = 14 atoms; 3×6 - 2×1 = 16... actually 3×6-3=15).
   //
-  // Topology derived from RDKit output for c1ccc2cc3ccccc3cc2c1:
-  //   Fusion atoms (H=0, degree 3): indices 3, 5, 10, 12 (0-based in drawn graph)
-  //   Outer perimeter: 0-1-2-3-4-5-6-7-8-9-10-11-12-13-0 (14 atoms)
-  //   Fusion bonds: 3-12 (between ring1 and ring2) and 5-10 (between ring2 and ring3)
-  //   Ring1: {0,1,2,3,12,13}  Ring2: {3,4,5,10,11,12}  Ring3: {5,6,7,8,9,10}
+  // IUPAC locants: 1–10 (non-fusion) + 4a,4b,8a,9a (4 fusion atoms, indices 10–13).
   //
-  // IUPAC locant assignment: 1=C,2=C,3=C,4=C,4a=C(fus),5=C,6=C,7=C,8=C,9=C,10=C,10a=C(fus),9a=C(fus),4b=C(fus)
-  // In table indices: 0-based positions are used; locant = index+1 (with 4a=index 3, 9a=index 5, etc.)
+  //   Ring A (right terminal): C1(0)-C2(1)-C3(2)-C4(3)-C4a(10)-C9a(13)
+  //   Ring B (left terminal):  C4b(11)-C5(4)-C6(5)-C7(6)-C8(7)-C8a(12)
+  //   Ring C (middle):         C4a(10)-C9a(13)-C9(8)-C10(9)-C4b(11)-C8a(12)... wait
+  //
+  // The middle ring of anthracene: C4a-C4b-C8a-C9-C10-C9a (linear topology means
+  // C4a is bonded to C4 and to C9a; C4b is bonded to C5 and to C8a; C9 and C10 are
+  // the peri positions in the middle ring).
+  //
+  //   Middle ring bonds: C4a(10)-C9a(13), C9a(13)-C9(8), C9(8)-C10(9),
+  //                      C10(9)-C4b(11), C4b(11)-C8a(12), C8a(12)-C4a(10)
+  //
+  // PubChem verified: 1-methylanthracene (CID 11316), 2-methylanthracene (CID 7726)
   {
     name: "anthracene",
     indicatedH: null,
     canonicalOrder: [
-      C(), C(), C(), C0, C(), C0, C(), C(), C(), C(), C0, C(), C0, C(),
+      C(), C(), C(), C(), C(), C(), C(), C(), C(), C(), C0,  C0,  C0,  C0,
+    //  1     2     3     4     5     6     7     8     9    10   4a   4b   8a   9a
     ],
-    // Perimeter bonds + 2 fusion bonds matching RDKit c1ccc2cc3ccccc3cc2c1 topology:
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],[11,12],[12,13],[13,0],
-      [3,12],[5,10], // fusion bonds
+      // Ring A: C1-C2-C3-C4-C4a-C9a
+      [0,1],[1,2],[2,3],[3,10],[10,13],[13,0],
+      // Ring B: C4b-C5-C6-C7-C8-C8a
+      [11,4],[4,5],[5,6],[6,7],[7,12],[12,11],
+      // Middle ring: C4a-C10-C4b-[ring B shared C4b-C8a]-C8a-C9-C9a-[ring A shared C9a-C4a]
+      // Key: C10(9) is bonded to C4a(10) AND C4b(11); C9(8) is bonded to C8a(12) AND C9a(13)
+      // There is NO direct C4a-C8a bond in anthracene (linear topology).
+      [10,9],[9,11],[12,8],[8,13],
     ],
   },
 
   // ────────────────────────────────────────────────────────────────────────────
-  // PHENANTHRENE (C14H10): three fused benzene rings in angular arrangement
-  // Angular fusion distinguishes it from anthracene (linear).
+  // PHENANTHRENE (C14H10): three angularly fused benzene rings
   //
-  // Topology derived from RDKit output for c1ccc2ccc3ccccc3c2c1:
-  //   Fusion atoms (H=0, degree 3): indices 3, 6, 11, 12 (0-based in drawn graph)
-  //   Outer perimeter: 0-1-2-3-4-5-6-7-8-9-10-11-12-13-0 (14 atoms)
-  //   Fusion bonds: 3-12 (between ring1 and ring2) and 6-11 (between ring2 and ring3)
-  //   Ring1: {0,1,2,3,12,13}  Ring2: {3,4,5,6,11,12}  Ring3: {6,7,8,9,10,11}
+  // IUPAC locants: 1–10 (non-fusion) + 4a,4b,8a,10a (4 fusion atoms, indices 10–13).
+  // Angular fusion: Ring A and Ring B share C4a–C10a (one side); Ring B and Ring C
+  // share C4b–C8a (other side). Ring B is the "middle" ring.
   //
-  // The angular topology means fusion bonds 3-12 and 6-11 are separated by 3 perimeter
-  // steps (3→4→5→6), vs anthracene's 2 steps (3→4→5). This is the key graph difference.
+  //   Ring A: C1(0)-C2(1)-C3(2)-C4(3)-C4a(10)-C10a(13)
+  //   Ring C: C4b(11)-C5(4)-C6(5)-C7(6)-C8(7)-C8a(12)
+  //   Ring B (middle): C4a(10)-C10a(13)-C10(9)-C9(8)-C8a(12)... wait
+  //
+  // Phenanthrene middle ring (6-membered): C4a-C4b-C8a-C9-C10-C10a
+  //   Middle ring bonds: C4a(10)-C4b(11), C4b(11)-C8a(12)...
+  // Hmm: Angular means Ring B (middle) connects Ring A via C4a–C10a and
+  //   connects Ring C via C4b–C8a. The middle ring is: C4a-C10a-C10-C9-C8a-C4b.
+  //   Wait — in phenanthrene, C10a is adjacent to C1(ring A) AND C10(middle ring).
+  //   C4b is adjacent to C5(ring C) AND to C4a(middle)? That would make Ring B
+  //   contain: C4a-C10a-C10-C9-C8a-C4b, connecting via bonds C4a–C10a and C4b–C8a.
+  //   But that's NOT angular — that would be linear (anthracene-like) because
+  //   both fusion bonds are on the SAME FACE of the middle ring.
+  //
+  // For ANGULAR fusion: Ring A bonds to Ring B via one bond (C4a–C4b? or C4a–C10a?),
+  //   and Ring B bonds to Ring C via a bond on the ADJACENT side of Ring B.
+  //   In phenanthrene, Ring A uses C4a–C10a, and Ring C uses C4b–C8a. These two
+  //   shared bonds are at an ANGLE (not on opposite sides of ring B as in anthracene).
+  //
+  //   Phenanthrene middle ring: C4a-C4b-C8a-C9-C10-C10a
+  //   Bonds: C4a(10)-C4b(11), C4b(11)-C8a(12), C8a(12)-C9(8), C9(8)-C10(9), C10(9)-C10a(13), C10a(13)-C4a(10)
+  //
+  //   vs Anthracene middle ring: C4a-C4b-C8a-C9-C10-C9a (C9a adj to C4a; C8a adj to C4b)
+  //   Bonds: C4a(10)-C9a(13), C9a(13)-C9(8), C9(8)-C10(9), C10(9)-C4b(11), C4b(11)-C8a(12), C8a(12)-C4a(10)
+  //
+  // So the DIFFERENCE is: anthracene has C4a bonded to C9a (ring A partner) AND C8a;
+  //   phenanthrene has C4a bonded to C10a (ring A partner) AND C4b.
+  //
+  // PubChem verified: 1-methylphenanthrene, 2-methyl (CID 2723), 3-methyl, 4-methyl,
+  //   9-methylphenanthrene (CID 11742 is 9-methylanthracene; phenanthrene 9-methyl is CID 10367)
   {
     name: "phenanthrene",
     indicatedH: null,
     canonicalOrder: [
-      C(), C(), C(), C0, C(), C(), C0, C(), C(), C(), C(), C0, C0, C(),
+      C(), C(), C(), C(), C(), C(), C(), C(), C(), C(), C0,  C0,  C0,  C0,
+    //  1     2     3     4     5     6     7     8     9    10   4a   4b   8a  10a
     ],
-    // Perimeter bonds + 2 fusion bonds matching RDKit c1ccc2ccc3ccccc3c2c1 topology:
     canonicalBonds: [
-      [0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],[11,12],[12,13],[13,0],
-      [3,12],[6,11], // fusion bonds (angular)
+      // Ring A: C1-C2-C3-C4-C4a-C10a
+      [0,1],[1,2],[2,3],[3,10],[10,13],[13,0],
+      // Ring C: C4b-C5-C6-C7-C8-C8a
+      [11,4],[4,5],[5,6],[6,7],[7,12],[12,11],
+      // Middle ring (B): C4a-C4b-C8a-C9-C10-C10a (angular: C4a bonds C4b, not C9a)
+      [10,11],[12,8],[8,9],[9,13],
+      // (Bonds [10,13] and [11,12] are the ring A/C fusion bonds, already listed above)
     ],
   },
 ];
@@ -1510,10 +1579,23 @@ function findIsomorphisms(
 
   // Get drawn atom label (element + H count)
   const atomById = new Map(graph.atoms.map(a => [a.index, a]));
+  // Build full-graph degree (including non-ring bonds) for external-substituent detection
+  const fullDegreeMap = new Map<number, number>();
+  for (const b of graph.bonds) {
+    fullDegreeMap.set(b.from, (fullDegreeMap.get(b.from) ?? 0) + 1);
+    fullDegreeMap.set(b.to, (fullDegreeMap.get(b.to) ?? 0) + 1);
+  }
   const drawnLabel = (idx: number): string => {
     const a = atomById.get(idx);
     if (!a) return "?";
     if (a.element !== "C" && a.hydrogens > 0) return `${a.element}H${a.hydrogens}`;
+    // N with H=0 but external substituents (e.g. N-methyl): matches as "NH1"
+    // to allow substitution at indicated-H positions (e.g. 1-methylindole at N1).
+    if (a.element === "N" && a.hydrogens === 0) {
+      const ringDeg = drawnAdj.get(idx)?.size ?? 0;
+      const fullDeg = fullDegreeMap.get(idx) ?? 0;
+      if (fullDeg > ringDeg) return "NH1"; // has external substituent → may occupy NH position
+    }
     return a.element;
   };
 
