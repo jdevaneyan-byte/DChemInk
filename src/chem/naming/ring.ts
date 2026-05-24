@@ -1,7 +1,145 @@
 // src/chem/naming/ring.ts
 // Task 1: single-ring perception + canonical ring fingerprint (pure TS, no RDKit)
 // Task 2: ring tables (carbocycle / benzene / heterocycle) + numbering
+// Task T4S2: multi-ring perception (perceiveRingSystem) + polycyclic fingerprint + curated fused table
 import type { MolGraph } from "./graph";
+
+// ────────────────────────────────────────────────────────────────────────────────
+// T4 Stage 0: Multi-ring system perception + classification
+// ────────────────────────────────────────────────────────────────────────────────
+
+export type RingSystemKind = "mono" | "fused" | "spiro" | "bridged" | "assembly" | "other";
+
+export interface RingSystemInfo {
+  /** Number of SSSR rings */
+  ringCount: number;
+  /** Classification of the overall ring system */
+  kind: RingSystemKind;
+  /** All ring atom indices (union of all SSSR rings) */
+  atoms: Set<number>;
+  /** All ring bond pairs (both directions; from < to) */
+  bonds: Set<string>;
+  /** Each SSSR ring as array of atom indices */
+  rings: number[][];
+}
+
+/**
+ * Perceive all SSSR rings from atom.ringIds and classify the ring system.
+ *
+ * Classification rules (for all rings considered together):
+ *   mono     – exactly 1 ring
+ *   fused    – 2+ rings, every pair of adjacent rings shares exactly 2 atoms AND
+ *              those 2 atoms are joined by a bond (ortho-fused)
+ *   spiro    – 2+ rings; at least one pair shares exactly 1 atom
+ *   bridged  – 2+ rings; at least one pair shares exactly 2 atoms NOT bonded
+ *   assembly – 2+ rings; no atoms shared between any rings (disjoint)
+ *   other    – anything else (e.g. 3+ atoms shared, or peri-fused)
+ */
+export function perceiveRingSystem(graph: MolGraph): RingSystemInfo {
+  // Collect SSSR rings from atom.ringIds
+  const ringAtomLists = new Map<number, number[]>();
+  for (const a of graph.atoms) {
+    for (const rid of a.ringIds) {
+      if (!ringAtomLists.has(rid)) ringAtomLists.set(rid, []);
+      ringAtomLists.get(rid)!.push(a.index);
+    }
+  }
+
+  const rings = [...ringAtomLists.values()];
+  const ringCount = rings.length;
+
+  // Build bond index for quick lookup
+  const bondSet = new Set<string>();
+  for (const b of graph.bonds) {
+    const lo = Math.min(b.from, b.to);
+    const hi = Math.max(b.from, b.to);
+    bondSet.add(`${lo},${hi}`);
+  }
+  const hasBond = (a: number, b: number): boolean => {
+    const lo = Math.min(a, b);
+    const hi = Math.max(a, b);
+    return bondSet.has(`${lo},${hi}`);
+  };
+
+  // Union of all ring atoms
+  const allAtoms = new Set<number>();
+  for (const r of rings) for (const a of r) allAtoms.add(a);
+
+  // Build ring bond set (for adjacency queries)
+  const allRingBonds = new Set<string>();
+  for (const a of allAtoms) {
+    for (const b of graph.bonds) {
+      if ((b.from === a || b.to === a) && allAtoms.has(b.from) && allAtoms.has(b.to)) {
+        const lo = Math.min(b.from, b.to);
+        const hi = Math.max(b.from, b.to);
+        allRingBonds.add(`${lo},${hi}`);
+      }
+    }
+  }
+
+  if (ringCount === 0) {
+    return { ringCount: 0, kind: "mono", atoms: new Set(), bonds: new Set(), rings: [] };
+  }
+  if (ringCount === 1) {
+    return { ringCount: 1, kind: "mono", atoms: allAtoms, bonds: allRingBonds, rings };
+  }
+
+  // For 2+ rings: examine all pairs
+  // Build atom sets for each ring
+  const ringSets = rings.map(r => new Set(r));
+
+  let hasSpiro = false;
+  let hasBridged = false;
+  let hasDisjoint = false;
+  let hasFused = false;
+  let hasOther = false;
+
+  for (let i = 0; i < rings.length; i++) {
+    for (let j = i + 1; j < rings.length; j++) {
+      const shared: number[] = [];
+      for (const a of ringSets[i]) {
+        if (ringSets[j].has(a)) shared.push(a);
+      }
+      if (shared.length === 0) {
+        hasDisjoint = true;
+      } else if (shared.length === 1) {
+        hasSpiro = true;
+      } else if (shared.length === 2) {
+        // Check if the two shared atoms are bonded
+        if (hasBond(shared[0], shared[1])) {
+          hasFused = true;
+        } else {
+          hasBridged = true;
+        }
+      } else if (shared.length === 3) {
+        // 3 shared atoms in SSSR rings: this is a bicyclo bridged system
+        // e.g. norbornane: two SSSR rings sharing a one-atom bridge + two bridgeheads
+        // The bridge atom is between the two bridgehead atoms but not directly bonded to both
+        // → classify as bridged (von Baeyer)
+        hasBridged = true;
+      } else {
+        // 4+ shared atoms: complex topology (e.g. adamantane or other unusual systems)
+        hasOther = true;
+      }
+    }
+  }
+
+  let kind: RingSystemKind;
+  if (hasOther) {
+    kind = "other";
+  } else if (hasSpiro) {
+    kind = "spiro";
+  } else if (hasBridged) {
+    kind = "bridged";
+  } else if (hasDisjoint) {
+    kind = "assembly";
+  } else {
+    // Only fused pairs found
+    kind = "fused";
+  }
+
+  return { ringCount, kind, atoms: allAtoms, bonds: allRingBonds, rings };
+}
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Task 1: Ring perception

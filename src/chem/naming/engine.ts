@@ -4,7 +4,7 @@ import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } fro
 import { nameSubstituent } from "./substituent";
 import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, type SuffixKind, type Sub } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
-import { perceiveRing, nameRing, ringSubstituentName, type RingInfo } from "./ring";
+import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, type RingInfo } from "./ring";
 
 /**
  * Elements supported by Tier 2+3 (C, H, O, N, F, Cl, Br, I, S for heterocycles).
@@ -931,11 +931,43 @@ function nameAromaticRingCarbonyl(
 }
 
 /**
+ * Tier 4, Stage 2: name a fused (ortho-fused) multi-ring system.
+ * Stub: returns unsupported until the fused table is in place (Task 2).
+ */
+function nameFusedRingSystem(
+  _graph: MolGraph,
+  _ringSys: import("./ring").RingSystemInfo,
+): NameResult {
+  return { name: null, status: "unsupported", reason: "fused ring system not yet supported — Tier 4 (Stage 2)" };
+}
+
+/**
  * Name a single-ring molecule. Called by nameMolecule when hasRing() is true.
  */
 function nameMoleculeRing(graph: MolGraph): NameResult {
   const heavy = graph.atoms.filter((a) => a.element !== "H");
 
+  // ── Stage 0: perceive and classify ring system ────────────────────────────
+  const ringSys = perceiveRingSystem(graph);
+
+  if (ringSys.kind === "fused") {
+    // Route to Tier 4 Stage 2 fused ring handler
+    return nameFusedRingSystem(graph, ringSys);
+  }
+  if (ringSys.kind === "spiro") {
+    return { name: null, status: "unsupported", reason: "spiro ring system — Tier 4 (Stage 4)" };
+  }
+  if (ringSys.kind === "bridged") {
+    return { name: null, status: "unsupported", reason: "bridged ring system — Tier 4 (Stage 3, von Baeyer)" };
+  }
+  if (ringSys.kind === "assembly") {
+    return { name: null, status: "unsupported", reason: "ring assembly (disjoint rings) — Tier 4 (Stage 4)" };
+  }
+  if (ringSys.kind === "other") {
+    return { name: null, status: "unsupported", reason: "complex polycyclic ring system — Tier 4" };
+  }
+
+  // mono → use existing single-ring path
   // Perceive the ring
   const ring = perceiveRing(graph);
   if (!ring) {
