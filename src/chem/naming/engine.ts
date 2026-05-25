@@ -51,9 +51,44 @@ function hasHeavyAtomCycle(graph: MolGraph): boolean {
 }
 
 /** Structural sanity gate (fragments, charge) — checked BEFORE perception. */
+/**
+ * The nitro group is written by RDKit in its charged Kekulé form [O-]-[N+]=O,
+ * so the only formal charges in a neutral nitro compound are the N(+1) and its
+ * O(-1). Allow such net-neutral molecules through (nitro names as a prefix);
+ * reject every other charged species (salts, ammonium, carboxylate, …).
+ */
+function chargesAreAllNitro(graph: MolGraph): boolean {
+  let net = 0;
+  for (const a of graph.atoms) net += a.charge;
+  if (net !== 0) return false;
+  const byId = new Map(graph.atoms.map((a) => [a.index, a]));
+  const nbrs = (idx: number) => graph.bonds
+    .filter((b) => b.from === idx || b.to === idx)
+    .map((b) => ({ atom: byId.get(b.from === idx ? b.to : b.from)!, order: b.order }));
+  for (const a of graph.atoms) {
+    if (a.charge === 0) continue;
+    if (a.element === "N" && a.charge === 1) {
+      const ns = nbrs(a.index);
+      const hasNegO = ns.some((n) => n.atom.element === "O" && n.atom.charge === -1 && n.order === 1);
+      const hasDblO = ns.some((n) => n.atom.element === "O" && n.atom.charge === 0 && n.order === 2);
+      if (hasNegO && hasDblO) continue;
+      return false;
+    }
+    if (a.element === "O" && a.charge === -1) {
+      const ns = nbrs(a.index);
+      if (ns.length === 1 && ns[0].atom.element === "N" && ns[0].atom.charge === 1) continue;
+      return false;
+    }
+    return false; // any other charged atom
+  }
+  return true;
+}
+
 function structuralRejectReason(graph: MolGraph): string | null {
   if (graph.fragmentCount > 1) return "multiple fragments — arrives in a later tier";
-  if (graph.atoms.some((a) => a.charge !== 0)) return "contains a charged atom — later tier";
+  if (graph.atoms.some((a) => a.charge !== 0) && !chargesAreAllNitro(graph)) {
+    return "contains a charged atom — later tier";
+  }
   return null;
 }
 
