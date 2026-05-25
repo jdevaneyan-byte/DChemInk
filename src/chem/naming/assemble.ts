@@ -27,10 +27,14 @@ export function stereoDescriptor(
   graph: {
     stereoAtoms?: Map<number, "R" | "S">;
     stereoBonds?: { a: number; b: number; label: "E" | "Z" }[];
+    specifiedStereoCount?: number;
   },
   locantOf: (atomIndex: number) => number | undefined,
 ): string | null {
-  const total = (graph.stereoAtoms?.size ?? 0) + (graph.stereoBonds?.length ?? 0);
+  // Authoritative total = ALL specified stereo (incl. pseudoasymmetric / cis-trans
+  // that carry no uppercase CIP label). If we can't place every one, decline.
+  const total = graph.specifiedStereoCount ??
+    ((graph.stereoAtoms?.size ?? 0) + (graph.stereoBonds?.length ?? 0));
   if (total === 0) return "";
 
   const items: { locant: number; label: string; isBond: boolean }[] = [];

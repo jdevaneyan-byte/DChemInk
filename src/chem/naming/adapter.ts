@@ -16,10 +16,12 @@ interface CommonChemAtom {
   z?: number;       // atomic number; omitted when = 6 (carbon, the default)
   chg?: number;     // formal charge; omitted when = 0
   impHs?: number;   // implicit H count; omitted when = 0
+  stereo?: string;  // "cw" | "ccw" for a SPECIFIED tetrahedral parity (RDKit clears non-stereogenic)
 }
 interface CommonChemBond {
   bo?: number;              // bond order; omitted when = 1 (single, the default)
   atoms: [number, number];  // always present
+  stereo?: string;          // "cis" | "trans" for a SPECIFIED double-bond parity
 }
 interface CommonChemExtension {
   name?: string;
@@ -81,9 +83,20 @@ export function graphFromSmiles(smiles: string): MolGraph | null {
     // ── Stereodescriptors (CIP) ─────────────────────────────────────────────
     // RDKit assigns CIP labels only for SPECIFIED stereo (@/@@, /\, wedges).
     // get_stereo_tags(): { CIP_atoms: [[idx,"(R)"|"(S)"]], CIP_bonds: [[a,b,"(E)"|"(Z)"]] }
+    // We accept only UPPERCASE R/S and E/Z (true CIP). RDKit also emits lowercase
+    // (r)/(s) for pseudoasymmetric / cis-trans ring centers, which we cannot yet
+    // express — those are detected via specifiedStereoCount and lead to a decline.
     const { stereoAtoms, stereoBonds } = extractStereo(mol);
 
-    return { atoms, bonds, fragmentCount, stereoAtoms, stereoBonds };
+    // Count SPECIFIED stereo parity (independent of CIP label case): RDKit clears
+    // parity on non-stereogenic atoms, so atom.stereo/bond.stereo mark exactly the
+    // stereo the input pinned down. If this exceeds the uppercase descriptors we
+    // can emit, the engine declines rather than drop stereo.
+    const specifiedStereoCount =
+      m.atoms.filter((a) => a.stereo === "cw" || a.stereo === "ccw").length +
+      m.bonds.filter((b) => b.stereo === "cis" || b.stereo === "trans").length;
+
+    return { atoms, bonds, fragmentCount, stereoAtoms, stereoBonds, specifiedStereoCount };
   } finally {
     mol.delete();
   }

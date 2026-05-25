@@ -29,6 +29,12 @@ export interface MolGraph {
   stereoAtoms?: Map<number, "R" | "S">;
   /** CIP E/Z for SPECIFIED double bonds. */
   stereoBonds?: StereoBond[];
+  /**
+   * Total count of SPECIFIED stereo parities (cw/ccw atoms + cis/trans bonds),
+   * including pseudoasymmetric / cis-trans centers that get no uppercase CIP
+   * label. When this exceeds the descriptors we can emit, naming declines.
+   */
+  specifiedStereoCount?: number;
 }
 export interface NameResult {
   name: string | null;

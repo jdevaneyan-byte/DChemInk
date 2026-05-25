@@ -81,6 +81,23 @@ function isTwoPart(k: GroupKind): k is "acylHalide" | "ester" | "anhydride" {
   return k === "acylHalide" || k === "ester" || k === "anhydride";
 }
 
+/**
+ * Decline (no wrong names) when the molecule carries SPECIFIED stereo that a
+ * given naming path does not yet express — emitting the name without the
+ * descriptor would denote a less-specific structure. Returns a decline result
+ * when stereo is present, else null (continue). Used by structure classes whose
+ * paths don't yet thread a stereodescriptor (cyclic carbonyls, acid derivatives,
+ * styrene, …); the wired paths handle their own stereo via stereoDescriptor().
+ */
+function stereoUnsupported(graph: MolGraph): NameResult | null {
+  const total = graph.specifiedStereoCount ??
+    ((graph.stereoAtoms?.size ?? 0) + (graph.stereoBonds?.length ?? 0));
+  if (total > 0) {
+    return { name: null, status: "unsupported", reason: "stereodescriptor not yet supported for this structure class" };
+  }
+  return null;
+}
+
 /** Prefix form of a non-principal group. */
 function prefixForm(g: Group): string {
   switch (g.kind) {
@@ -1246,7 +1263,11 @@ function nameFusedRingWithSubs(
     addedCarbon,
   });
 
-  return { name: finalName, status: "named" };
+  const fusedStereo = stereoDescriptor(graph, (idx) => naming.locantOf.get(idx));
+  if (fusedStereo === null) {
+    return { name: null, status: "unsupported", reason: "stereodescriptor not expressible on this fused system — not yet supported" };
+  }
+  return { name: fusedStereo + finalName, status: "named" };
 }
 
 /**
@@ -1260,6 +1281,10 @@ function nameMoleculeFusedRingAsSubstituent(
   pcgKind: import("./functionalGroups").GroupKind,
   pcgGroups: import("./functionalGroups").Group[],
 ): NameResult {
+  // Fused-ring-as-substituent naming doesn't yet thread a stereodescriptor.
+  const sUnsup = stereoUnsupported(graph);
+  if (sUnsup) return sUnsup;
+
   const heavy = graph.atoms.filter(a => a.element !== "H");
   const ringAtoms = ringSys.atoms;
 
@@ -1668,7 +1693,11 @@ function nameSpiroRingSystem(
     finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), spiroParent);
   }
 
-  return { name: finalName, status: "named" };
+  const spiroStereo = stereoDescriptor(graph, (idx) => locantOf.get(idx));
+  if (spiroStereo === null) {
+    return { name: null, status: "unsupported", reason: "stereodescriptor not expressible on this spiro system — not yet supported" };
+  }
+  return { name: spiroStereo + finalName, status: "named" };
 }
 
 // ── Tier 4 Stage 3: von Baeyer (bridged) ring system naming ────────────────
@@ -1965,7 +1994,11 @@ function nameBridgedRingSystem(
     finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), vbParent);
   }
 
-  return { name: finalName, status: "named" };
+  const vbStereo = stereoDescriptor(graph, (idx) => locantOf.get(idx));
+  if (vbStereo === null) {
+    return { name: null, status: "unsupported", reason: "stereodescriptor not expressible on this bridged system — not yet supported" };
+  }
+  return { name: vbStereo + finalName, status: "named" };
 }
 
 /**
@@ -2571,7 +2604,11 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     retainedAromatic,
   });
 
-  return { name: finalName, status: "named" };
+  const stereoPfx = stereoDescriptor(graph, (idx) => locantOf.get(idx));
+  if (stereoPfx === null) {
+    return { name: null, status: "unsupported", reason: "stereodescriptor not expressible on this ring system — not yet supported" };
+  }
+  return { name: stereoPfx + finalName, status: "named" };
 }
 
 /** Map PCG kind to the added-carbon suffix kind for exocyclic groups. */
@@ -2938,7 +2975,14 @@ function nameMoleculeRingAsSubstituent(
   }
 
   const nameTxt = assembleName({ chainLen: chain.length, doubles, triples, subs, suffix });
-  return { name: nameTxt, status: "named", parentChain: chain };
+  const stereoPfx = stereoDescriptor(graph, (idx) => {
+    const p = chain.indexOf(idx);
+    return p >= 0 ? p + 1 : undefined;
+  });
+  if (stereoPfx === null) {
+    return { name: null, status: "unsupported", reason: "stereodescriptor not expressible on a ring substituent — not yet supported" };
+  }
+  return { name: stereoPfx + nameTxt, status: "named", parentChain: chain };
 }
 
 export function nameMolecule(graph: MolGraph): NameResult {
@@ -3015,6 +3059,10 @@ export function nameMolecule(graph: MolGraph): NameResult {
 
     // ── Two-part naming path (Tier 2b): acylHalide / ester / anhydride ─────────
     if (pcgKind && isTwoPart(pcgKind)) {
+      // Two-part acid-derivative names don't yet thread a stereodescriptor.
+      const sUnsup = stereoUnsupported(graph);
+      if (sUnsup) return sUnsup;
+
       const groupAtomSet = new Set<number>();
       for (const g of groups) for (const a of g.atoms) groupAtomSet.add(a);
 
