@@ -1695,6 +1695,14 @@ function nameSpiroRingSystem(
     return { name: null, status: "unsupported", reason: "spiro ring: unaccounted atoms — substituent not yet supported" };
   }
 
+  // NO WRONG NAMES: we can express ring unsaturation (ene) on a spiro system
+  // only when there is no suffix/added-carbon to combine it with. A spiro ring
+  // that has BOTH a ring double bond AND a suffix/added-carbon would drop the
+  // ene → decline.
+  if (unsatBonds.length > 0 && (suffix || addedCarbon)) {
+    return { name: null, status: "unsupported", reason: "unsaturated spiro ring with a suffix group — not yet supported" };
+  }
+
   // ── Assemble ene suffix for ring double bonds ──────────────────────────────
   let finalName: string;
   if (unsatBonds.length > 0 && !suffix && !addedCarbon) {
@@ -1987,6 +1995,13 @@ function nameBridgedRingSystem(
   // ── Completeness guard ─────────────────────────────────────────────────────
   if (heavy.some(a => !accountedAtoms.has(a.index))) {
     return { name: null, status: "unsupported", reason: "bridged ring: unaccounted atoms — substituent not yet supported" };
+  }
+
+  // NO WRONG NAMES: a bridged ring with BOTH a ring double bond AND a suffix /
+  // added-carbon would drop the ene (bicyclo[2.2.1]hept-2-ene-2-carboxylic acid
+  // is not yet expressible) → decline rather than name it saturated.
+  if (unsatBonds.length > 0 && (suffix || addedCarbon)) {
+    return { name: null, status: "unsupported", reason: "unsaturated bridged ring with a suffix group — not yet supported" };
   }
 
   // ── Assemble ene suffix for ring double bonds ──────────────────────────────
@@ -2437,6 +2452,25 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
 
   const { locantOf } = ringNaming;
 
+  // NO WRONG NAMES: substituted N-H azoles (imidazole, pyrazole, triazole, …)
+  // are numbered relative to the INDICATED hydrogen (1H), and which ring carbon
+  // is e.g. 4 vs 5 depends on the drawn tautomer. The engine does not yet do
+  // indicated-H-aware numbering, so it mislocants substituents (it named
+  // 5-methyl-1H-imidazole as "4-methylimidazole"). Decline a substituted/
+  // suffixed aromatic ring that has a pyrrole-type N-H AND a second ring
+  // heteroatom (the tautomer-sensitive case). Pyrrole (single N), pyridine,
+  // furan, thiophene, oxazole/thiazole (pyridine-type N) are unaffected.
+  if (ringNaming.kind === "heterocycle" && ring.aromatic && ring.heteroatoms.length >= 2) {
+    const hasPyrroleNH = ring.heteroatoms.some((idx) => {
+      const a = graph.atoms.find((x) => x.index === idx);
+      return a?.element === "N" && a.hydrogens >= 1;
+    });
+    const hasRingSubOrPcg = subMap.size > 0 || pcgOnRingAtom || pcgOnExocyclicC;
+    if (hasPyrroleNH && hasRingSubOrPcg) {
+      return { name: null, status: "unsupported", reason: "substituted N-H azole (indicated-hydrogen numbering) — not yet supported" };
+    }
+  }
+
   // ── Special retained aromatics: styrene ──────────────────────────────────────
   // Styrene = benzene + exactly one vinyl (CH=CH2) substituent, no other groups.
   if (ringNaming.kind === "benzene" && !pcgKind && groups.length === 0) {
@@ -2591,10 +2625,12 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     if (groups.some(g => g.atoms.includes(b.from) || g.atoms.includes(b.to))) continue;
     // Exocyclic group bonds for exocyclic PCG (C=O for aldehyde, etc.)
     if (pcgGroups.some(g => g.carbon === b.from || g.carbon === b.to)) continue;
-    // Exo double bond from ring to substituent (e.g. styrene C=C)
-    // Allow if both atoms are in accountedAtoms
-    if (accountedAtoms.has(b.from) && accountedAtoms.has(b.to)) continue;
-    return { name: null, status: "unsupported", reason: "contains a multiple bond not expressible in this tier" };
+    // NO WRONG NAMES: a multiple bond inside a substituent (e.g. an ethenyl /
+    // alkenyl group on a ring) is NOT expressed by the saturated substituent
+    // namer — naming it would drop the unsaturation (c1ccccc1C=C(CC) →
+    // "butylbenzene"). Bare styrene is recognised and returned earlier; every
+    // other exocyclic/substituent multiple bond declines here.
+    return { name: null, status: "unsupported", reason: "unsaturated (alkenyl/alkynyl) substituent on ring — not yet supported" };
   }
 
   // ── Retained aromatic names ─────────────────────────────────────────────────
@@ -2799,6 +2835,19 @@ function nameMoleculeRingAsSubstituent(
   // supported — decline (no wrong names).
   if (isTwoPart(pcgKind)) {
     return { name: null, status: "unsupported", reason: "acid derivative on ring-substituent chain — not yet supported" };
+  }
+
+  // NO WRONG NAMES: an N-H azole used as a substituent (imidazol-4-yl, …) has the
+  // same indicated-hydrogen / tautomer-sensitive locant issue as the parent case
+  // (the engine names "imidazol-4-yl" where PubChem has "1H-imidazol-5-yl").
+  // Decline a ring substituent that is an aromatic ≥2-heteroatom ring with a
+  // pyrrole-type N-H.
+  if (ring.aromatic && ring.heteroatoms.length >= 2 &&
+      ring.heteroatoms.some((idx) => {
+        const a = graph.atoms.find((x) => x.index === idx);
+        return a?.element === "N" && a.hydrogens >= 1;
+      })) {
+    return { name: null, status: "unsupported", reason: "N-H azole ring substituent (indicated-hydrogen numbering) — not yet supported" };
   }
 
   // The ring naming (to get the substituent name: phenyl, cyclohexyl, pyridin-2-yl, etc.)
