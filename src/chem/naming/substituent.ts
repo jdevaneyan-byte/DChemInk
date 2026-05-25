@@ -1,6 +1,17 @@
 // src/chem/naming/substituent.ts
-import { parentStem, multiplierPrefix } from "./graph";
-import { type CarbonGraph } from "./chain";
+import { multiplierPrefix } from "./graph";
+import { ccOrder, type CarbonGraph } from "./chain";
+import { alkenylYl } from "./assemble";
+
+/**
+ * Thrown when a substituent contains unsaturation (or arrangement) that the
+ * substituent namer cannot express on its main chain — e.g. an allene, a
+ * methylidene (=CH2 branch), or a multiple bond between the chain and a branch.
+ * Callers catch this at the top of nameMolecule and DECLINE (no wrong names).
+ */
+export class UnnameableSubstituent extends Error {
+  constructor(msg = "substituent contains unexpressible unsaturation") { super(msg); this.name = "UnnameableSubstituent"; }
+}
 
 /** Carbons reachable from `root` without crossing back to `blocked`. */
 function subtree(cg: CarbonGraph, root: number, blocked: number): Set<number> {
@@ -55,15 +66,45 @@ export function nameSubstituent(cg: CarbonGraph, root: number, blocked: number):
     const combined = [...[...branch].reverse(), root, ...fromRoot.slice(1)];
     if (combined.length > chain.length) chain = combined;
   }
-  // Number so the free valence (root) gets the lowest locant.
+  // Number so the free valence (root) gets the lowest locant; on a tie (symmetric
+  // valence position) give unsaturation the lowest locants — e.g. isopropenyl is
+  // prop-1-en-2-yl (ene@1), not prop-2-en-2-yl.
   const fwd = chain;
   const rev = [...chain].reverse();
-  const valFwd = fwd.indexOf(root) + 1;
-  const valRev = rev.indexOf(root) + 1;
-  const ordered = valFwd <= valRev ? fwd : rev;
+  const unsatKey = (order: number[]): number[] => {
+    const ks: number[] = [];
+    for (let i = 0; i < order.length - 1; i++) if (ccOrder(cg, order[i], order[i + 1]) >= 2) ks.push(i + 1);
+    return ks.sort((a, b) => a - b);
+  };
+  const keyOf = (order: number[]): number[] => [order.indexOf(root) + 1, ...unsatKey(order)];
+  const kf = keyOf(fwd), kr = keyOf(rev);
+  let cmp = 0;
+  for (let i = 0; i < Math.max(kf.length, kr.length) && cmp === 0; i++) cmp = (kf[i] ?? 99) - (kr[i] ?? 99);
+  const ordered = cmp <= 0 ? fwd : rev;
   const valence = ordered.indexOf(root) + 1;
 
   const inChain = new Set(ordered);
+
+  // ── ene/yne on the substituent main chain (alkenyl/alkynyl) ─────────────────
+  const doubles: number[] = [];
+  const triples: number[] = [];
+  let onChainMultiples = 0;
+  for (let i = 0; i < ordered.length - 1; i++) {
+    const o = ccOrder(cg, ordered[i], ordered[i + 1]);
+    if (o === 2) { doubles.push(i + 1); onChainMultiples++; }
+    else if (o === 3) { triples.push(i + 1); onChainMultiples++; }
+  }
+  // Any multiple bond in the subtree that is NOT a consecutive main-chain pair
+  // (allene, methylidene/=CH2 branch, chain↔branch double bond) is not
+  // expressible → decline the whole molecule.
+  let totalMultiples = 0;
+  for (const a of atoms) {
+    for (const b of cg.adj.get(a) ?? []) {
+      if (a < b && atoms.has(b) && ccOrder(cg, a, b) >= 2) totalMultiples++;
+    }
+  }
+  if (totalMultiples !== onChainMultiples) throw new UnnameableSubstituent();
+
   const subs: { locant: number; name: string }[] = [];
   for (let i = 0; i < ordered.length; i++) {
     for (const nb of cg.adj.get(ordered[i]) ?? []) {
@@ -72,10 +113,7 @@ export function nameSubstituent(cg: CarbonGraph, root: number, blocked: number):
       }
     }
   }
-  const stem = parentStem(ordered.length);
-  // Use simple "stem+yl" form when free valence is at position 1;
-  // use "stemanN-yl" form only when the valence is at an interior/terminal position > 1.
-  const base = valence === 1 ? `${stem}yl` : `${stem}an-${valence}-yl`;
+  const base = alkenylYl(ordered.length, valence, doubles, triples);
   if (subs.length === 0) return base;
   // e.g. "2-methyl" + "propyl" = "2-methylpropyl" (no separator before parent yl)
   return prefixFor(subs) + base;

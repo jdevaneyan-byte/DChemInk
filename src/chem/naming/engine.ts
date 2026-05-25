@@ -1,7 +1,7 @@
 // src/chem/naming/engine.ts
 import type { MolGraph, NameResult } from "./graph";
 import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } from "./chain";
-import { nameSubstituent } from "./substituent";
+import { nameSubstituent, UnnameableSubstituent } from "./substituent";
 import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, stereoDescriptor, type SuffixKind, type Sub } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
 import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, nameFusedRing, nameHydroFused, detectBridgedBicyclic, nameVonBaeyer, isAdamantane, detectMonoSpiro, nameSpiro, type RingInfo } from "./ring";
@@ -96,6 +96,10 @@ function stereoUnsupported(graph: MolGraph): NameResult | null {
     return { name: null, status: "unsupported", reason: "stereodescriptor not yet supported for this structure class" };
   }
   return null;
+}
+
+function isCarbon(graph: MolGraph, idx: number): boolean {
+  return graph.atoms.find((a) => a.index === idx)?.element === "C";
 }
 
 /** Prefix form of a non-principal group. */
@@ -2625,12 +2629,13 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     if (groups.some(g => g.atoms.includes(b.from) || g.atoms.includes(b.to))) continue;
     // Exocyclic group bonds for exocyclic PCG (C=O for aldehyde, etc.)
     if (pcgGroups.some(g => g.carbon === b.from || g.carbon === b.to)) continue;
-    // NO WRONG NAMES: a multiple bond inside a substituent (e.g. an ethenyl /
-    // alkenyl group on a ring) is NOT expressed by the saturated substituent
-    // namer — naming it would drop the unsaturation (c1ccccc1C=C(CC) →
-    // "butylbenzene"). Bare styrene is recognised and returned earlier; every
-    // other exocyclic/substituent multiple bond declines here.
-    return { name: null, status: "unsupported", reason: "unsaturated (alkenyl/alkynyl) substituent on ring — not yet supported" };
+    // A multiple bond fully inside an off-ring alkyl branch (both ends off the
+    // ring, both carbon) is an alkenyl/alkynyl substituent — nameSubstituent
+    // expresses it (or throws UnnameableSubstituent, caught as a decline). A
+    // ring↔substituent double bond (one end on the ring, e.g. exocyclic
+    // methylidene / non-styrene vinylidene) is NOT allowed here.
+    if (!ringSet.has(b.from) && !ringSet.has(b.to) && isCarbon(graph, b.from) && isCarbon(graph, b.to)) continue;
+    return { name: null, status: "unsupported", reason: "unsaturated substituent or exocyclic multiple bond not expressible — not yet supported" };
   }
 
   // ── Retained aromatic names ─────────────────────────────────────────────────
@@ -3058,6 +3063,19 @@ function nameMoleculeRingAsSubstituent(
 }
 
 export function nameMolecule(graph: MolGraph): NameResult {
+  try {
+    return nameMoleculeImpl(graph);
+  } catch (e) {
+    // A substituent with unexpressible unsaturation (allene, methylidene, …)
+    // signals a decline rather than crashing — no wrong names.
+    if (e instanceof UnnameableSubstituent) {
+      return { name: null, status: "unsupported", reason: e.message };
+    }
+    throw e;
+  }
+}
+
+function nameMoleculeImpl(graph: MolGraph): NameResult {
   const heavy = graph.atoms.filter((a) => a.element !== "H");
   if (heavy.length === 0) return { name: null, status: "empty" };
 
@@ -3589,6 +3607,10 @@ export function nameMolecule(graph: MolGraph): NameResult {
       if (groups.some((g) => g.atoms.includes(b.from) && g.atoms.includes(b.to))) continue;
       // carbonyl/nitrile: group records only the heteroatom; the C is the anchor.
       if (groups.some((g) => g.atoms.includes(b.from) || g.atoms.includes(b.to))) continue;
+      // A multiple bond fully inside an alkyl branch (both ends off the main
+      // chain, both carbon) is an alkenyl/alkynyl substituent — nameSubstituent
+      // expresses it (or throws UnnameableSubstituent, caught as a decline).
+      if (!inChain.has(b.from) && !inChain.has(b.to) && isCarbon(graph, b.from) && isCarbon(graph, b.to)) continue;
       return {
         name: null,
         status: "unsupported",

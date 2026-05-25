@@ -158,6 +158,31 @@ function prefixSegment(
     .join("-");
 }
 
+/**
+ * Build an alkyl / alkenyl / alkynyl SUBSTITUENT name (the "-yl" form).
+ *   saturated:  valence 1 → "propyl";  interior valence → "propan-2-yl"
+ *   alkenyl:    "ethenyl", "prop-1-en-1-yl", "prop-1-en-2-yl", "prop-2-en-1-yl",
+ *               "buta-1,3-dien-1-yl"
+ *   alkynyl:    "ethynyl", "prop-2-yn-1-yl"
+ * `valence` is the locant of the free valence (already chosen lowest); doubles/
+ * triples are ene/yne locants on the substituent chain.
+ */
+export function alkenylYl(chainLen: number, valence: number, doubles: number[], triples: number[]): string {
+  const stem = parentStem(chainLen);
+  if (doubles.length === 0 && triples.length === 0) {
+    return valence === 1 ? `${stem}yl` : `${stem}an-${valence}-yl`;
+  }
+  // 2-carbon: the single bond is degenerate at locant 1 → "ethenyl" / "ethynyl".
+  if (chainLen === 2) return `${stem}${doubles.length ? "en" : "yn"}yl`;
+
+  const needA = doubles.length > 1 || (doubles.length === 0 && triples.length > 1);
+  const head = needA ? `${stem}a` : stem;
+  let mid = "";
+  if (doubles.length) mid += `-${doubles.join(",")}-${multiplierPrefix(doubles.length)}en`;
+  if (triples.length) mid += `-${triples.join(",")}-${multiplierPrefix(triples.length)}yn`;
+  return `${head}${mid}-${valence}-yl`;
+}
+
 /** Build the unsaturation ending, e.g. "ane", "-2-ene", "a-1,3-diene", "-1-en-4-yne". */
 function ending(stem: string, chainLen: number, doubles: number[], triples: number[]): string {
   if (doubles.length === 0 && triples.length === 0) return `${stem}ane`;

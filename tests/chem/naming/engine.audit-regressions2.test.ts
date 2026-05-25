@@ -21,12 +21,12 @@ function res(s: string) {
   return nameMolecule(g);
 }
 
-describe("audit2 – unsaturated (alkenyl) substituent on a ring declines", () => {
-  it("benzene + vinyl + methyl declines (was '1-ethyl-2-methylbenzene')", () => {
-    expect(res("c(C)1ccccc1C=C").status).toBe("unsupported");
+describe("audit2 – alkenyl substituent on a ring now NAMES correctly (was wrong)", () => {
+  it("benzene + vinyl + methyl → 1-ethenyl-2-methylbenzene (was '1-ethyl-2-methylbenzene')", () => {
+    expect(res("c(C)1ccccc1C=C").name).toBe("1-ethenyl-2-methylbenzene");
   });
-  it("benzene + 1-substituted vinyl declines (was 'butylbenzene')", () => {
-    expect(res("c1ccccc1C=C(CC)").status).toBe("unsupported");
+  it("benzene + 1-substituted vinyl → (but-1-en-1-yl)benzene (was 'butylbenzene')", () => {
+    expect(res("c1ccccc1C=C(CC)").name).toBe("(but-1-en-1-yl)benzene");
   });
   it("bare styrene still names", () => {
     expect(res("C=Cc1ccccc1").name).toBe("styrene");

@@ -181,8 +181,8 @@ describe("nameMolecule (Tier 2 end-to-end)", () => {
   });
   // Multiple-bond guard: a vinyl branch stranded off the acid's parent chain
   // can't be expressed (no alkenyl substituents yet) → declined, not mis-named.
-  it("C=CC(C=C)C(=O)O (off-chain C=C) → unsupported", () => {
-    expect(status("C=CC(C=C)C(=O)O")).toBe("unsupported");
+  it("C=CC(C=C)C(=O)O → 2-ethenylbut-3-enoic acid (alkenyl substituent, T5+)", () => {
+    expect(name("C=CC(C=C)C(=O)O")).toBe("2-ethenylbut-3-enoic acid");
   });
 });
 
