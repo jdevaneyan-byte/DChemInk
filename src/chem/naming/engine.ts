@@ -2451,6 +2451,18 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     // Non-PCG groups directly on ring atoms contribute their prefix form
     for (const g of groups) {
       if (g.kind === pcgKind) continue; // PCG is handled by pcgAtoms, not alpha key
+      if (g.kind === "ether") {
+        // Alkoxy: key the ring carbon bearing the ether O with "methoxy"/"ethoxy"
+        // so the alphabetical locant tie-break ranks it correctly.
+        const oAtom = g.atoms[0];
+        const ringAtom = [...ringSet].find((idx) => graph.bonds.some(
+          (b) => (b.from === idx && b.to === oAtom) || (b.to === idx && b.from === oAtom),
+        ));
+        if (ringAtom !== undefined && etherAlkoxyAtoms(graph, oAtom, ringSet) && !subAlphaKeys.has(ringAtom)) {
+          subAlphaKeys.set(ringAtom, alphaKey(etherPrefixFor(graph, g, ringSet)));
+        }
+        continue;
+      }
       if (ringSet.has(g.carbon) && !subAlphaKeys.has(g.carbon)) {
         subAlphaKeys.set(g.carbon, alphaKey(prefixForm(g)));
       }
@@ -2530,6 +2542,24 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
 
   // Process non-PCG groups attached to ring atoms
   for (const g of nonPcgGroups) {
+    if (g.kind === "ether") {
+      // Alkoxy substituent on a ring (anisole = methoxybenzene). The ether O
+      // must be bonded to a ring carbon; the OTHER side is a SIMPLE linear alkyl
+      // (etherAlkoxyAtoms returns null for branched/hetero/unsaturated alkoxy,
+      // which then declines via the completeness guard — no wrong names).
+      const oAtom = g.atoms[0];
+      const ringAtom = [...ringSet].find((idx) => graph.bonds.some(
+        (b) => (b.from === idx && b.to === oAtom) || (b.to === idx && b.from === oAtom),
+      ));
+      if (ringAtom === undefined) continue; // O not on the ring → completeness guard declines
+      const alk = etherAlkoxyAtoms(graph, oAtom, ringSet);
+      const loc = locantOf.get(ringAtom);
+      if (alk && loc !== undefined) {
+        ringNameSubs.push({ locant: loc, name: etherPrefixFor(graph, g, ringSet) });
+        for (const a of alk) accountedAtoms.add(a);
+      }
+      continue;
+    }
     if (ringSet.has(g.carbon)) {
       // Group directly on ring atom
       const loc = locantOf.get(g.carbon);
