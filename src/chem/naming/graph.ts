@@ -15,10 +15,20 @@ export interface NamingBond {
   order: 1 | 2 | 3;     // kekulized for naming
   aromatic: boolean;
 }
+/** A specified C=C double-bond stereo element (CIP E/Z), atom indices + label. */
+export interface StereoBond {
+  a: number;
+  b: number;
+  label: "E" | "Z";
+}
 export interface MolGraph {
   atoms: NamingAtom[];
   bonds: NamingBond[];
   fragmentCount: number;
+  /** CIP R/S for SPECIFIED tetrahedral stereocenters (atom index → label). */
+  stereoAtoms?: Map<number, "R" | "S">;
+  /** CIP E/Z for SPECIFIED double bonds. */
+  stereoBonds?: StereoBond[];
 }
 export interface NameResult {
   name: string | null;

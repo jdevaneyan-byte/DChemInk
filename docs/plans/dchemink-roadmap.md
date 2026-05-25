@@ -165,8 +165,12 @@ variants); T4 Stage 3 ✅ (von Baeyer bridged ring systems: bicyclo[a.b.c]alkane
 heteroatom replacement, ene suffix, curated adamantane); T4 Stage 4 ✅
 (monospiro ring systems: carbocyclic + heteroatom replacement + substituents/
 suffixes, IUPAC lowest locants).
-Remaining: T4 Stage 5 (decalin/fused saturated, general heterocycles
-Hantzsch–Widman beyond curated table) + T5 (stereo) remain.
+Remaining (ordering decided 2026-05-25): **T5 (stereo: R/S, E/Z) NEXT**, then
+**T4 Stage 5** (decalin/fused-saturated, general Hantzsch–Widman) as the final
+naming task before Phase 2. Rationale: the 5000-structure audit confirmed
+Stage-5 systems DECLINE safely (no wrong names), so Stage 5 is added coverage,
+not a correctness gap; stereo affects far more everyday structures. T5 design:
+`p1.3-tier5-stereo-design.md` (uses RDKit CIP via get_stereo_tags).
 Next: Tier 3 (rings) → then P2.2 (smart selection) → P2.1
 (command palette) → P3.1 (export) → P2.3 (nicknames) → P3.3 (PWA) →
 P3.2 (journal styles) → P4.1 (lookup) → P4.2 (reaction UI + auto-group/lock)

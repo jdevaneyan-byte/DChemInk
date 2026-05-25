@@ -1,6 +1,6 @@
 // src/chem/naming/adapter.ts
 import { parseSmiles } from "../rdkit";
-import type { MolGraph, NamingAtom, NamingBond } from "./graph";
+import type { MolGraph, NamingAtom, NamingBond, StereoBond } from "./graph";
 
 const SYMBOL: Record<number, string> = {
   1: "H", 5: "B", 6: "C", 7: "N", 8: "O", 9: "F", 14: "Si", 15: "P",
@@ -78,8 +78,53 @@ export function graphFromSmiles(smiles: string): MolGraph | null {
     // CC.CC appears as ONE molecule entry with disconnected atoms — use union-find
     const fragmentCount = countFragments(atoms.length, bonds);
 
-    return { atoms, bonds, fragmentCount };
+    // ── Stereodescriptors (CIP) ─────────────────────────────────────────────
+    // RDKit assigns CIP labels only for SPECIFIED stereo (@/@@, /\, wedges).
+    // get_stereo_tags(): { CIP_atoms: [[idx,"(R)"|"(S)"]], CIP_bonds: [[a,b,"(E)"|"(Z)"]] }
+    const { stereoAtoms, stereoBonds } = extractStereo(mol);
+
+    return { atoms, bonds, fragmentCount, stereoAtoms, stereoBonds };
   } finally {
     mol.delete();
   }
+}
+
+interface StereoTags {
+  CIP_atoms?: [number, string][];
+  CIP_bonds?: [number, number, string][];
+}
+
+/** Strip CIP parentheses: "(R)" → "R", "(E)" → "E". */
+function cipLabel(raw: string): string {
+  return raw.replace(/[()]/g, "").trim();
+}
+
+function extractStereo(mol: { get_stereo_tags?: () => string }): {
+  stereoAtoms?: Map<number, "R" | "S">;
+  stereoBonds?: StereoBond[];
+} {
+  if (typeof mol.get_stereo_tags !== "function") return {};
+  let tags: StereoTags;
+  try {
+    tags = JSON.parse(mol.get_stereo_tags()) as StereoTags;
+  } catch {
+    return {};
+  }
+
+  const stereoAtoms = new Map<number, "R" | "S">();
+  for (const [idx, raw] of tags.CIP_atoms ?? []) {
+    const label = cipLabel(raw);
+    if (label === "R" || label === "S") stereoAtoms.set(idx, label);
+  }
+
+  const stereoBonds: StereoBond[] = [];
+  for (const [a, b, raw] of tags.CIP_bonds ?? []) {
+    const label = cipLabel(raw);
+    if (label === "E" || label === "Z") stereoBonds.push({ a, b, label });
+  }
+
+  return {
+    stereoAtoms: stereoAtoms.size > 0 ? stereoAtoms : undefined,
+    stereoBonds: stereoBonds.length > 0 ? stereoBonds : undefined,
+  };
 }
