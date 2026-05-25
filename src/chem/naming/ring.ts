@@ -591,6 +591,21 @@ const HETERO_TABLE: HeteroEntry[] = [
     aromatic: false,
     elementSeqs: [["N", "C", "C", "C", "C"]],
   },
+  // ── Saturated 5-membered (two N) — RETAINED names (HW would give diazolidine) ──
+  {
+    // imidazolidine = 1,3-diaza saturated 5-ring (N-C-N-C-C)
+    name: "imidazolidine",
+    size: 5,
+    aromatic: false,
+    elementSeqs: [["N", "C", "N", "C", "C"]],
+  },
+  {
+    // pyrazolidine = 1,2-diaza saturated 5-ring (N-N-C-C-C)
+    name: "pyrazolidine",
+    size: 5,
+    aromatic: false,
+    elementSeqs: [["N", "N", "C", "C", "C"]],
+  },
   // ── Saturated 5-membered (one O) = oxolane (tetrahydrofuran) ──
   {
     name: "oxolane",
@@ -633,6 +648,13 @@ const HETERO_TABLE: HeteroEntry[] = [
     aromatic: false,
     // O(1)-C-N(3)... wait — morpholine: O at 1, N at 4: O-C-C-N-C-C
     elementSeqs: [["O", "C", "C", "N", "C", "C"]],
+  },
+  // ── Saturated 6-membered (S + N at 1,4) = thiomorpholine (RETAINED; HW → 1,4-thiazinane) ──
+  {
+    name: "thiomorpholine",
+    size: 6,
+    aromatic: false,
+    elementSeqs: [["S", "C", "C", "N", "C", "C"]],
   },
   // ── Saturated 6-membered (N + N at 1,4) = piperazine ──
   {
@@ -716,6 +738,121 @@ function matchHeterocycle(
     }
   }
   return null;
+}
+
+// ── Hantzsch–Widman generator (saturated monocyclic heterocycles) ──────────────
+// Replacement prefixes in seniority order O > S > N (we support these three;
+// rings with other heteroatoms decline). Saturated stems by ring size, varying
+// on the presence of nitrogen. The 'a' of a replacement prefix elides before a
+// following vowel (another prefix or the stem — all saturated stems are
+// vowel-initial). Lowest locants go to the heteroatoms as a set, then to the
+// most senior heteroatom.
+const HW_PREFIX: Record<string, string> = { O: "oxa", S: "thia", N: "aza" };
+const HW_SENIORITY: Record<string, number> = { O: 1, S: 2, N: 3 };
+const HW_MULT = ["", "", "di", "tri", "tetra", "penta", "hexa"];
+
+function hwStem(size: number, hasN: boolean): string | null {
+  switch (size) {
+    case 3: return hasN ? "iridine" : "irane";
+    case 4: return hasN ? "etidine" : "etane";
+    case 5: return hasN ? "olidine" : "olane";
+    case 6: return hasN ? "inane" : "ane";
+    case 7: return "epane";
+    case 8: return "ocane";
+    case 9: return "onane";
+    case 10: return "ecane";
+    default: return null;
+  }
+}
+
+/** Concatenate, eliding a trailing 'a' before a vowel-initial continuation. */
+function hwJoin(prefix: string, next: string): string {
+  if (prefix.endsWith("a") && /^[aeiouy]/.test(next)) return prefix.slice(0, -1) + next;
+  return prefix + next;
+}
+
+/**
+ * Name a SATURATED monocyclic heterocycle via Hantzsch–Widman, returning the
+ * parent name and locant map, or null when not expressible (unsaturated ring,
+ * unsupported heteroatom, size out of range).
+ */
+export function nameHantzschWidman(ring: RingInfo, graph: MolGraph): RingNaming | null {
+  const n = ring.size;
+  if (n < 3 || n > 10) return null;
+
+  const atomById = new Map(graph.atoms.map((a) => [a.index, a]));
+  const ringSet = new Set(ring.atoms);
+
+  // Saturated only: no ring double bonds.
+  const ringDoubleBond = graph.bonds.some(
+    (b) => b.order === 2 && ringSet.has(b.from) && ringSet.has(b.to),
+  );
+  if (ringDoubleBond) return null;
+
+  // All heteroatoms must be HW-expressible (O/S/N).
+  for (const idx of ring.heteroatoms) {
+    const el = atomById.get(idx)?.element ?? "C";
+    if (!(el in HW_PREFIX)) return null;
+  }
+
+  const elementAt = (idx: number) => atomById.get(idx)?.element ?? "C";
+  const hasN = ring.heteroatoms.some((idx) => elementAt(idx) === "N");
+
+  const stem = hwStem(n, hasN);
+  if (!stem) return null;
+
+  // ── Choose the numbering: lowest locants to heteroatoms (as a set), then to
+  // the most senior heteroatom. Enumerate every start position and direction. ──
+  const heteroSet = new Set(ring.heteroatoms);
+  let best: { locantOf: Map<number, number>; key: number[] } | null = null;
+  for (let start = 0; start < n; start++) {
+    for (const fwd of [true, false]) {
+      const locantOf = new Map<number, number>();
+      for (let i = 0; i < n; i++) {
+        const pos = fwd ? (start + i) % n : ((start - i) % n + n) % n;
+        locantOf.set(ring.atoms[pos], i + 1);
+      }
+      // Sort key: heteroatom locants ascending, then per-heteroatom (locant,
+      // seniority) so a tie on the set prefers the senior element at the lower locant.
+      const hetLocs = ring.atoms
+        .filter((idx) => heteroSet.has(idx))
+        .map((idx) => ({ loc: locantOf.get(idx)!, sen: HW_SENIORITY[elementAt(idx)] }))
+        .sort((a, b) => a.loc - b.loc);
+      const key: number[] = [];
+      for (const h of hetLocs) key.push(h.loc);
+      for (const h of hetLocs) key.push(h.sen);
+      if (!best || compareLocantSets(key, best.key) < 0) best = { locantOf, key };
+    }
+  }
+  if (!best) return null;
+  const locantOf = best.locantOf;
+
+  // ── Build the replacement prefix in seniority order with multipliers ──────────
+  const byElement = new Map<string, number[]>(); // element → sorted locants
+  for (const idx of ring.heteroatoms) {
+    const el = elementAt(idx);
+    const arr = byElement.get(el) ?? [];
+    arr.push(locantOf.get(idx)!);
+    byElement.set(el, arr);
+  }
+  const elementsInOrder = [...byElement.keys()].sort((a, b) => HW_SENIORITY[a] - HW_SENIORITY[b]);
+
+  let prefix = "";
+  const allLocants: number[] = [];
+  for (const el of elementsInOrder) {
+    const locs = byElement.get(el)!.sort((a, b) => a - b);
+    allLocants.push(...locs);
+    const token = `${HW_MULT[locs.length] ?? ""}${HW_PREFIX[el]}`;
+    prefix = prefix === "" ? token : hwJoin(prefix, token);
+  }
+  const parent = hwJoin(prefix, stem);
+
+  // Cite locants only when there is more than one heteroatom (a lone heteroatom
+  // is always at locant 1, which is omitted: "oxane", "oxocane").
+  allLocants.sort((a, b) => a - b);
+  const name = allLocants.length > 1 ? `${allLocants.join(",")}-${parent}` : parent;
+
+  return { parent: name, locantOf, kind: "heterocycle" };
 }
 
 /**
@@ -939,7 +1076,15 @@ export function nameRing(
   // ── Heterocycle (match against table) ─────────────────────────────────────────
   if (ring.heteroatoms.length > 0) {
     const match = matchHeterocycle(ring, graph);
-    if (!match) return null; // not in table → Tier 4
+    if (!match) {
+      // Fall back to the algorithmic Hantzsch–Widman generator for SATURATED
+      // monocyclic heterocycles not in the curated retained table (1,3-dioxolane,
+      // 1,4-dioxane, 1,3-oxazinane, oxocane, …). Unsaturated non-aromatic
+      // heterocycles (indicated-H systems like 2H-pyran) remain declined.
+      const hw = nameHantzschWidman(ring, graph);
+      if (hw) return hw;
+      return null; // not in table / not HW-expressible → Tier 4
+    }
 
     const { entry, startIdx, forward } = match;
     const n = ring.size;
