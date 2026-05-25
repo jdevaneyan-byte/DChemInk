@@ -803,7 +803,27 @@ export function nameHantzschWidman(ring: RingInfo, graph: MolGraph): RingNaming 
 
   // ── Choose the numbering: lowest locants to heteroatoms (as a set), then to
   // the most senior heteroatom. Enumerate every start position and direction. ──
-  const heteroSet = new Set(ring.heteroatoms);
+  const elementsPresent = [...new Set(ring.heteroatoms.map(elementAt))].sort(
+    (a, b) => HW_SENIORITY[a] - HW_SENIORITY[b],
+  );
+  // Numbering rule (deduced from PubChem across mixed-heteroatom rings):
+  //   1. lowest locant for the MOST-SENIOR heteroatom element (O>S>N) — e.g.
+  //      1,2,6-thiadiazepane has S@1 even though 1,2,4 is a lower set;
+  //   2. then the lowest overall heteroatom locant SET — e.g. 1,4,2-dithiazolidine
+  //      (both options have an S@1, so the lower set {1,2,4} decides);
+  //   3. then senior-element locants (for the final citation orientation).
+  // Citation itself groups locants per prefix in seniority order (1,3,2-dioxazinane).
+  const seniorEl = elementsPresent[0];
+  const keyFor = (locantOf: Map<number, number>): number[] => {
+    const seniorMin = Math.min(...ring.heteroatoms.filter((i) => elementAt(i) === seniorEl).map((i) => locantOf.get(i)!));
+    const fullSet = ring.heteroatoms.map((i) => locantOf.get(i)!).sort((a, b) => a - b);
+    const grouped: number[] = [];
+    for (const el of elementsPresent) {
+      grouped.push(...ring.heteroatoms.filter((i) => elementAt(i) === el).map((i) => locantOf.get(i)!).sort((a, b) => a - b));
+    }
+    return [seniorMin, -1, ...fullSet, -1, ...grouped];
+  };
+
   let best: { locantOf: Map<number, number>; key: number[] } | null = null;
   for (let start = 0; start < n; start++) {
     for (const fwd of [true, false]) {
@@ -812,45 +832,28 @@ export function nameHantzschWidman(ring: RingInfo, graph: MolGraph): RingNaming 
         const pos = fwd ? (start + i) % n : ((start - i) % n + n) % n;
         locantOf.set(ring.atoms[pos], i + 1);
       }
-      // Sort key: heteroatom locants ascending, then per-heteroatom (locant,
-      // seniority) so a tie on the set prefers the senior element at the lower locant.
-      const hetLocs = ring.atoms
-        .filter((idx) => heteroSet.has(idx))
-        .map((idx) => ({ loc: locantOf.get(idx)!, sen: HW_SENIORITY[elementAt(idx)] }))
-        .sort((a, b) => a.loc - b.loc);
-      const key: number[] = [];
-      for (const h of hetLocs) key.push(h.loc);
-      for (const h of hetLocs) key.push(h.sen);
+      const key = keyFor(locantOf);
       if (!best || compareLocantSets(key, best.key) < 0) best = { locantOf, key };
     }
   }
   if (!best) return null;
   const locantOf = best.locantOf;
 
-  // ── Build the replacement prefix in seniority order with multipliers ──────────
-  const byElement = new Map<string, number[]>(); // element → sorted locants
-  for (const idx of ring.heteroatoms) {
-    const el = elementAt(idx);
-    const arr = byElement.get(el) ?? [];
-    arr.push(locantOf.get(idx)!);
-    byElement.set(el, arr);
-  }
-  const elementsInOrder = [...byElement.keys()].sort((a, b) => HW_SENIORITY[a] - HW_SENIORITY[b]);
-
+  // ── Build prefix + locant citation, GROUPED by element in seniority order ─────
+  // IUPAC cites locants grouped per replacement prefix in citation (seniority)
+  // order — NOT globally sorted: e.g. O at {1,4}, N at {2} → "1,4,2-dioxaza…".
   let prefix = "";
-  const allLocants: number[] = [];
-  for (const el of elementsInOrder) {
-    const locs = byElement.get(el)!.sort((a, b) => a - b);
-    allLocants.push(...locs);
+  const citedLocants: number[] = [];
+  for (const el of elementsPresent) {
+    const locs = ring.heteroatoms.filter((i) => elementAt(i) === el).map((i) => locantOf.get(i)!).sort((a, b) => a - b);
+    citedLocants.push(...locs);
     const token = `${HW_MULT[locs.length] ?? ""}${HW_PREFIX[el]}`;
     prefix = prefix === "" ? token : hwJoin(prefix, token);
   }
   const parent = hwJoin(prefix, stem);
 
-  // Cite locants only when there is more than one heteroatom (a lone heteroatom
-  // is always at locant 1, which is omitted: "oxane", "oxocane").
-  allLocants.sort((a, b) => a - b);
-  const name = allLocants.length > 1 ? `${allLocants.join(",")}-${parent}` : parent;
+  // A lone heteroatom is always at locant 1, which is omitted ("oxane", "oxocane").
+  const name = ring.heteroatoms.length > 1 ? `${citedLocants.join(",")}-${parent}` : parent;
 
   return { parent: name, locantOf, kind: "heterocycle" };
 }

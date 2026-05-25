@@ -58,6 +58,19 @@ describe("T4S5 – retained saturated names (not HW-generated)", () => {
   it("thiomorpholine (not 1,4-thiazinane)", () => expect(name("C1CSCCN1")).toBe("thiomorpholine"));
 });
 
+describe("T4S5 – mixed multi-heteroatom numbering (senior-min, then set; grouped citation)", () => {
+  // PubChem-verified: senior heteroatom takes the lowest locant first, then the
+  // overall set; locants are cited grouped per prefix in seniority order.
+  const cases: [string, string][] = [
+    ["C1NCCCNS1", "1,2,6-thiadiazepane"], // S@1 beats the lower set {1,2,4}
+    ["C1SNCS1", "1,4,2-dithiazolidine"],  // both have S@1 → lower set {1,2,4} decides
+    ["O1CCCON1", "1,3,2-dioxazinane"],    // grouped citation O{1,3} then N{2}
+    ["N1CCOCCN1", "1,4,5-oxadiazepane"],
+    ["N1OCCOC1", "1,4,2-dioxazinane"],
+  ];
+  for (const [smi, n] of cases) it(`${smi} → ${n}`, () => expect(name(smi)).toBe(n));
+});
+
 describe("T4S5 – substituents on HW rings", () => {
   it("2-methyl-1,3-dioxolane", () => expect(name("CC1OCCO1")).toBe("2-methyl-1,3-dioxolane"));
 });

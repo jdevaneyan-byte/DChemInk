@@ -176,9 +176,27 @@ config); pseudoasymmetric / cis-trans centers that carry no uppercase CIP label
 via specifiedStereoCount). OPSIN round-trip audited (134 distinct stereoisomers,
 0 mismatch; canonical SMILES carries stereo so a wrong descriptor = mismatch) +
 PubChem-verified. Design: `p1.3-tier5-stereo-design.md`.
-Remaining: **T4 Stage 5** (decalin/fused-saturated, general Hantzsch–Widman) as
-the final naming task before Phase 2 — added coverage, not a correctness gap
-(the 5000-structure audit confirmed these DECLINE safely, no wrong names).
+**✅ T4 Stage 5 shipped (general fusion / saturated heterocycles):**
+(1) Fixed two pre-existing wrong names the 5000-audit missed: partially-saturated
+fused systems were matched to their aromatic parent (tetralin→"naphthalene") and
+unsaturated non-tabled heterocycles were mis-named (2H-pyran→"oxa-2,4-diene") —
+both now decline or name correctly (isFullyMancude guard + saturated-entry guard).
+(2) Algorithmic **Hantzsch–Widman** for saturated monocyclic heterocycles
+(1,3-dioxolane, 1,4-dioxane, 1,3,5-trioxane, 1,3-oxazinane, 1,4-oxathiane,
+1,3,5-triazinane, oxocane, azocane, mixed multi-heteroatom like
+1,2,6-thiadiazepane/1,4,2-dithiazolidine with the PubChem-verified
+senior-min→set numbering and grouped-per-prefix locant citation); retained
+imidazolidine/pyrazolidine/thiomorpholine. (3) **Hydrogenated** carbocyclic
+naphthalene family with fusion-atom **letter locants** (decalin →
+1,2,3,4,4a,5,6,7,8,8a-decahydronaphthalene, tetralin → 1,2,3,4-tetrahydro-
+naphthalene, di/octahydronaphthalene). Substituted hydro-fused, the indene
+family (indicated-H interplay), unsaturated non-aromatic heterocycles, and 3+
+heteroatom edge cases that need cis-trans/indicated-H decline (no wrong names).
+Stage-5 OPSIN round-trip audit (542 distinct saturation variants, 0 mismatch,
+0 unparseable) + PubChem-verified. NOTE: for some di/tri-heteroatom rings
+PubChem omits the locant prefix (e.g. "diazepane"); we emit the locant-bearing
+PIN ("1,2-diazepane") — structurally correct, consistent with systematic-PIN
+policy. **The IUPAC naming engine is now feature-complete; next is Phase 2.**
 Next: Tier 3 (rings) → then P2.2 (smart selection) → P2.1
 (command palette) → P3.1 (export) → P2.3 (nicknames) → P3.3 (PWA) →
 P3.2 (journal styles) → P4.1 (lookup) → P4.2 (reaction UI + auto-group/lock)
