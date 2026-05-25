@@ -1327,6 +1327,11 @@ export interface FusedRingEntry {
    * null for systems with no indicated H.
    */
   indicatedH: number | null;
+  /**
+   * Letter locants for ring-fusion atoms (canonical 0-based index → "4a"/"8a"…),
+   * used by hydrogenated-fused naming (decahydronaphthalene). Optional.
+   */
+  fusionLocants?: Record<number, string>;
 }
 
 /**
@@ -1389,6 +1394,7 @@ export const FUSED_RING_TABLE: FusedRingEntry[] = [
   {
     name: "naphthalene",
     indicatedH: null,
+    fusionLocants: { 8: "4a", 9: "8a" },
     canonicalOrder: [C(), C(), C(), C(), C(), C(), C(), C(), C0, C0],
     //                 1     2     3     4     5     6     7     8    4a   8a
     canonicalBonds: [
@@ -1932,6 +1938,75 @@ export function nameFusedRing(
   }
 
   return null;
+}
+
+const HYDRO_MULT: Record<number, string> = { 2: "di", 4: "tetra", 6: "hexa", 8: "octa", 10: "deca", 12: "dodeca" };
+
+/**
+ * Name a partially/fully hydrogenated CARBOCYCLIC fused system from the
+ * naphthalene family: decalin → 1,2,3,4,4a,5,6,7,8,8a-decahydronaphthalene,
+ * tetralin → 1,2,3,4-tetrahydronaphthalene, 1,2-dihydronaphthalene,
+ * 1,2,3,4,4a,5,6,7-octahydronaphthalene.
+ *
+ * Only handles all-carbon fused parents that carry `fusionLocants` (currently
+ * naphthalene) and have no substituents (callers pass bare ring systems). The
+ * indene/heteroatom families (indicated-H interplay) are not handled → null.
+ */
+export function nameHydroFused(graph: MolGraph, ringSys: RingSystemInfo): { name: string } | null {
+  // Carbocyclic only.
+  const atomById = new Map(graph.atoms.map((a) => [a.index, a]));
+  for (const idx of ringSys.atoms) {
+    if ((atomById.get(idx)?.element ?? "C") !== "C") return null;
+  }
+
+  const entry = FUSED_RING_TABLE.find((e) => e.name === "naphthalene" && e.fusionLocants);
+  if (!entry || entry.canonicalOrder.length !== ringSys.atoms.size) return null;
+
+  const isos = findIsomorphisms(graph, ringSys, entry);
+  if (isos.length === 0) return null;
+
+  // Saturated (hydro) ring atoms = those with no incident ring double bond.
+  const ringSet = ringSys.atoms;
+  const hasIncidentDouble = new Set<number>();
+  for (const b of graph.bonds) {
+    if (b.order === 2 && ringSet.has(b.from) && ringSet.has(b.to)) {
+      hasIncidentDouble.add(b.from);
+      hasIncidentDouble.add(b.to);
+    }
+  }
+  const hydroAtoms = [...ringSet].filter((a) => !hasIncidentDouble.has(a));
+  // Hydro count is even (double bonds removed in pairs); must name something.
+  if (hydroAtoms.length === 0 || hydroAtoms.length % 2 !== 0) return null;
+  const mult = HYDRO_MULT[hydroAtoms.length];
+  if (!mult) return null;
+
+  // findIsomorphisms returns drawn atom → LOCANT (1-based; fusion atoms = 9,10).
+  // fusionLocants is keyed by 0-based canonical index, so look up fusion[locant-1].
+  // Ordering value: fusion "4a" → 4.5, "8a" → 8.5; others → their locant.
+  const fusion = entry.fusionLocants!;
+  const locValue = (loc: number): number => {
+    const letter = fusion[loc - 1];
+    if (letter) return parseInt(letter, 10) + 0.5;
+    return loc;
+  };
+  const locDisplay = (loc: number): string => fusion[loc - 1] ?? String(loc);
+
+  // Choose the isomorphism that gives the hydro atoms the lowest locant set.
+  let bestKey: number[] | null = null;
+  let bestDisplay: string[] | null = null;
+  for (const iso of isos) {
+    const vals = hydroAtoms.map((a) => locValue(iso.get(a)!)).sort((x, y) => x - y);
+    if (bestKey === null || compareLocantSets(vals, bestKey) < 0) {
+      bestKey = vals;
+      bestDisplay = hydroAtoms
+        .map((a) => ({ v: locValue(iso.get(a)!), d: locDisplay(iso.get(a)!) }))
+        .sort((x, y) => x.v - y.v)
+        .map((e) => e.d);
+    }
+  }
+  if (!bestDisplay) return null;
+
+  return { name: `${bestDisplay.join(",")}-${mult}hydronaphthalene` };
 }
 
 // ────────────────────────────────────────────────────────────────────────────────

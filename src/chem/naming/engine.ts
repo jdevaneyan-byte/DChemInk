@@ -4,7 +4,7 @@ import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } fro
 import { nameSubstituent } from "./substituent";
 import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, stereoDescriptor, type SuffixKind, type Sub } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
-import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, nameFusedRing, detectBridgedBicyclic, nameVonBaeyer, isAdamantane, detectMonoSpiro, nameSpiro, type RingInfo } from "./ring";
+import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, nameFusedRing, nameHydroFused, detectBridgedBicyclic, nameVonBaeyer, isAdamantane, detectMonoSpiro, nameSpiro, type RingInfo } from "./ring";
 
 /**
  * Elements supported by Tier 2+3 (C, H, O, N, F, Cl, Br, I, S for heterocycles).
@@ -1006,6 +1006,11 @@ function nameFusedRingSystem(
   // A fully saturated fused ring (e.g. decalin) has no ring double bonds → decline to avoid
   // false isomorphism matches against aromatic entries (which share the same degree sequence).
   if (!isFullyMancude(graph, ringSys.atoms)) {
+    // Hydrogenated carbocyclic fused systems (decalin, tetralin, …) — name via
+    // hydro prefixes on the naphthalene parent (letter locants 4a/8a). Bare
+    // (unsubstituted) only; substituted/heteroatom/indene families decline.
+    const hydro = nameHydroFused(graph, ringSys);
+    if (hydro) return { name: hydro.name, status: "named" };
     return { name: null, status: "unsupported", reason: "saturated/partially-hydrogenated fused ring not in curated table — Tier 4 (Stage 5)" };
   }
 

@@ -171,12 +171,13 @@ describe("T4S3 Task4 – decline guard: out-of-scope systems still declined", ()
     expect(r?.reason).toMatch(/assembly/i);
   });
 
-  it("decalin (saturated fused bicyclic) → unsupported (not bridged)", () => {
-    // Decalin is fused, not bridged; must not receive a VB name.
+  it("decalin (saturated fused bicyclic) → decahydronaphthalene, never a VB name", () => {
+    // Decalin is fused, not bridged; must not receive a von Baeyer name. Named
+    // via the hydrogenated-fused path since T4 Stage 5.
     const g = graphFromSmiles("C1CCC2CCCCC2C1");
     const r = g ? nameMolecule(g) : null;
-    expect(r?.status).toBe("unsupported");
-    expect(r?.name).toBeNull();
+    expect(r?.status).toBe("named");
+    expect(r?.name).not.toMatch(/bicyclo/);
   });
 
   it("ring phosphorus in bicyclic → unsupported (not in VB_RING_ELEMENTS)", () => {

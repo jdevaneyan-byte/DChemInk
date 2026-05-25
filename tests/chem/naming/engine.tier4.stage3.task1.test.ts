@@ -99,11 +99,12 @@ describe("T4S3 Task1 – bridged ring with unsaturation", () => {
 // ── Decline: decalin is fused, not bridged ────────────────────────────────────
 
 describe("T4S3 Task1 – fused systems are NOT named as bridged", () => {
-  it("decalin is declined (fused, not in curated fused table)", () => {
-    // Must NOT be named as a von Baeyer bridged compound
-    // PubChem name is a retained decahydronaphthalene, not bicyclo[...]
+  it("decalin names as decahydronaphthalene, never as a von Baeyer bicyclo name", () => {
+    // Must NOT be named as a von Baeyer bridged compound. Since T4 Stage 5 it is
+    // correctly named via the hydrogenated-fused path (decahydronaphthalene).
     const r = nameMolecule(graph("C1CCC2CCCCC2C1"));
-    expect(r.status).toBe("unsupported");
-    expect(r.name).toBeNull();
+    expect(r.status).toBe("named");
+    expect(r.name).toBe("1,2,3,4,4a,5,6,7,8,8a-decahydronaphthalene");
+    expect(r.name).not.toMatch(/bicyclo/);
   });
 });
