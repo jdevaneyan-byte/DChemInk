@@ -2494,22 +2494,24 @@ export function nameSpiro(
    * (or with reversals)
    */
   function buildLocantMap(
-    smallFwd: boolean,
-    largeFwd: boolean,
+    firstNonSpiro: number[],
+    secondNonSpiro: number[],
+    firstFwd: boolean,
+    secondFwd: boolean,
   ): Map<number, number> {
     const m = new Map<number, number>();
     let loc = 1;
 
-    // Number the smaller ring (a non-spiro atoms)
-    const sAtoms = smallFwd ? smallerNonSpiro : [...smallerNonSpiro].reverse();
-    for (const at of sAtoms) m.set(at, loc++);
+    // Number the first ring (a non-spiro atoms)
+    const fAtoms = firstFwd ? firstNonSpiro : [...firstNonSpiro].reverse();
+    for (const at of fAtoms) m.set(at, loc++);
 
     // Spiro atom gets locant a+1
     m.set(spiroAtom, loc++);
 
-    // Number the larger ring (b non-spiro atoms)
-    const lAtoms = largeFwd ? largerNonSpiro : [...largerNonSpiro].reverse();
-    for (const at of lAtoms) m.set(at, loc++);
+    // Number the second ring (b non-spiro atoms)
+    const sAtoms = secondFwd ? secondNonSpiro : [...secondNonSpiro].reverse();
+    for (const at of sAtoms) m.set(at, loc++);
 
     return m;
   }
@@ -2535,10 +2537,19 @@ export function nameSpiro(
   //   - Which direction around the larger ring (CW vs CCW)
   // These 4 combinations are enumerated below.
 
+  // Ring orderings to consider. IUPAC numbers the smaller ring first; but when
+  // both rings are the SAME size, either ring may be numbered first and the
+  // lowest-locant rules (heteroatoms → unsaturation → PCG → substituents)
+  // decide which. Enumerate the swapped ordering only in that case.
+  const orderings: [number[], number[]][] = [[smallerNonSpiro, largerNonSpiro]];
+  if (a === b) orderings.push([largerNonSpiro, smallerNonSpiro]);
+
   const candidates: Map<number, number>[] = [];
-  for (const smallFwd of [true, false]) {
-    for (const largeFwd of [true, false]) {
-      candidates.push(buildLocantMap(smallFwd, largeFwd));
+  for (const [first, second] of orderings) {
+    for (const firstFwd of [true, false]) {
+      for (const secondFwd of [true, false]) {
+        candidates.push(buildLocantMap(first, second, firstFwd, secondFwd));
+      }
     }
   }
 
