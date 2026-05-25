@@ -86,6 +86,20 @@ what's deferred. It supersedes the older week-by-week breakdown.
     OPSIN round-trip audited: 12 bridged names parsed → structural identity confirmed;
     2 e2e tests (norbornane, quinuclidine) full SMILES→name→OPSIN→canonical-key round-trip.
     PubChem-verified before every assertion. 0 wrong names.
+  - **✅ Tier 4 Stage 4 shipped (monospiro ring systems):** carbocyclic spiro
+    (spiro[2.2]pentane, spiro[3.3]heptane, spiro[4.4]nonane, spiro[4.5]decane,
+    spiro[5.5]undecane), heteroatom replacement (1-oxa/1,4-dioxa/1-aza, with
+    lowest locants — incl. the equal-ring case where the heteroatom-bearing ring
+    is numbered first: 1-oxaspiro[5.5]undecane, 1-azaspiro[4.4]nonane), and
+    substituents/unsaturation/suffix groups (-ol, -one, -amine) numbered per the
+    spiro numbering. Emits IUPAC PREFERRED (lowest) locants; where PubChem's
+    namer prints a higher symmetric-equivalent locant (e.g. spiro[4.5]decan-2-one
+    vs PubChem's -3-one) we print the lower, matching the IUPAC rule and ChemDraw.
+    19-case OPSIN round-trip audit (structural identity confirmed) + 2 e2e
+    (spiro[4.5]decane, 1,4-dioxaspiro[4.5]decane). PubChem-verified before every
+    assertion. Dispiro/polyspiro and ring-heteroatom+suffix-carbonyl lactones
+    DECLINE (no wrong names). General fusion (decalin/Hantzsch-Widman) remains
+    DECLINED to Stage 5.
   - Engine in `src/chem/naming/` (pure-TS rules engine ← `MolGraph` ← RDKit
     perception adapter), live "IUPAC" row in the Properties panel, transparent
     "not yet supported — <reason>" for out-of-tier molecules. Tier staircase
@@ -148,9 +162,11 @@ rings/heterocycles); T4 Stage 1 ✅ (cyclic carbonyls: lactams, lactones, aromat
 ring-carbonyls/pyridinones); T4 Stage 2 ✅ (fused aromatic/heteroaromatic ring
 systems: naphthalene, quinoline, indole, purine, anthracene, phenanthrene + substituted
 variants); T4 Stage 3 ✅ (von Baeyer bridged ring systems: bicyclo[a.b.c]alkanes,
-heteroatom replacement, ene suffix, curated adamantane).
-Remaining: T4 Stage 4+ (decalin/fused saturated, spiro nomenclature, general
-heterocycles Hantzsch–Widman beyond curated table) + T5 (stereo) remain.
+heteroatom replacement, ene suffix, curated adamantane); T4 Stage 4 ✅
+(monospiro ring systems: carbocyclic + heteroatom replacement + substituents/
+suffixes, IUPAC lowest locants).
+Remaining: T4 Stage 5 (decalin/fused saturated, general heterocycles
+Hantzsch–Widman beyond curated table) + T5 (stereo) remain.
 Next: Tier 3 (rings) → then P2.2 (smart selection) → P2.1
 (command palette) → P3.1 (export) → P2.3 (nicknames) → P3.3 (PWA) →
 P3.2 (journal styles) → P4.1 (lookup) → P4.2 (reaction UI + auto-group/lock)
