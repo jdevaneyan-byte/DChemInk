@@ -1098,6 +1098,20 @@ function nameFusedRingWithSubs(
   const subMap = ringSubstituents(graph, ringAtoms);
   for (const [ringAtom] of subMap) subRingAtoms.add(ringAtom);
 
+  // NO WRONG NAMES: ring-FUSION atoms (shared by ≥2 SSSR rings) take letter
+  // locants (4a, 8a, 3a, 7a, …) that this engine does not yet emit; the curated
+  // table would otherwise assign them numeric locants (9, 10, …) and produce an
+  // invalid name (e.g. "9-methylquinoline"). If any substituent or PCG sits on a
+  // fusion atom, decline.
+  {
+    const fusionCount = new Map<number, number>();
+    for (const r of ringSys.rings) for (const a of r) fusionCount.set(a, (fusionCount.get(a) ?? 0) + 1);
+    const isFusion = (a: number) => (fusionCount.get(a) ?? 0) >= 2;
+    if ([...subRingAtoms].some(isFusion) || [...pcgRingAtoms].some(isFusion)) {
+      return { name: null, status: "unsupported", reason: "substituent on ring-fusion atom (letter locant) — not yet supported" };
+    }
+  }
+
   // Build exo carbon graph (non-ring carbons)
   const exoCarbonGraph = buildCarbonGraph(graph);
   for (const idx of ringAtoms) {
@@ -2718,6 +2732,15 @@ function nameMoleculeRingAsSubstituent(
   const heavy = graph.atoms.filter((a) => a.element !== "H");
   const ringSet = new Set(ring.atoms);
 
+  // Two-part / functional-class kinds (acyl halide, ester, anhydride) are not
+  // expressed via the suffix path; toSuffixKind has no mapping for them and
+  // would yield an "undefined" suffix (e.g. "cyclobutylmethaneundefined").
+  // These acid derivatives on a ring-substituent chain parent are not yet
+  // supported — decline (no wrong names).
+  if (isTwoPart(pcgKind)) {
+    return { name: null, status: "unsupported", reason: "acid derivative on ring-substituent chain — not yet supported" };
+  }
+
   // The ring naming (to get the substituent name: phenyl, cyclohexyl, pyridin-2-yl, etc.)
   // For ring-as-substituent, we need to find the attachment locant first
 
@@ -2754,13 +2777,37 @@ function nameMoleculeRingAsSubstituent(
     return { name: null, status: "unsupported", reason: "ring not attached to chain via carbon — not supported" };
   }
 
+  // NO WRONG NAMES: a ring used as a simple substituent is expressed by the
+  // saturated/aromatic substituent namer (cyclohexyl, phenyl, pyridin-2-yl).
+  // If a NON-aromatic ring carries unsaturation (e.g. a cyclohexene ring), that
+  // ring double/triple bond is not captured by ringSubstituentName and would be
+  // silently dropped (cyclohexenyl named as "cyclohexyl"). Decline instead.
+  if (!ring.aromatic) {
+    for (const b of graph.bonds) {
+      if (ringSet.has(b.from) && ringSet.has(b.to) && b.order >= 2) {
+        return {
+          name: null,
+          status: "unsupported",
+          reason: "unsaturated ring substituent (e.g. cyclohexenyl) — not yet supported",
+        };
+      }
+    }
+  }
+
   // Get the ring naming to get locant for the attachment
   const ringNaming = nameRing(graph, ring, {});
   if (!ringNaming) {
     return { name: null, status: "unsupported", reason: "ring not yet supported — Tier 4" };
   }
 
-  const attachLocant = ringNaming.locantOf.get(ringAttachAtom) ?? 1;
+  // For a plain carbocyclic ring substituent the ring carries no other
+  // substituents (any extra ring substituent is caught by the completeness
+  // guard below), so the free valence is locant 1 by definition → "cyclohexyl",
+  // never "cyclohex-3-yl". Heterocycle/benzene locants stay as numbered
+  // (heteroatom-anchored).
+  const attachLocant = ringNaming.kind === "carbocycle"
+    ? 1
+    : (ringNaming.locantOf.get(ringAttachAtom) ?? 1);
   const ringSub = ringSubstituentName(ringNaming.parent, ringNaming.kind, attachLocant);
 
   // Verify only ONE ring-to-chain attachment (spiro/bridged → decline)

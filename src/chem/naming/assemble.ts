@@ -450,10 +450,13 @@ export function assembleRingName(input: RingAssemblyInput): string {
     // The added-carbon appends to the ring base (not to a suffix-modified name).
     // Re-derive the ring base without suffix:
     const ringBase = buildUnsaturatedBase(parent, ringDoubleBondLocants);
+    // Multiple added-carbon groups take a multiplicative prefix:
+    // spiro[5.5]undecane-1,9-dicarbaldehyde, cyclohexane-1,4-dicarboxylic acid.
+    const mult = multiplierPrefix(locants.length);
     if (locantStr) {
-      baseName = `${ringBase}${locantStr}${kind}`;
+      baseName = `${ringBase}${locantStr}${mult}${kind}`;
     } else {
-      baseName = `${ringBase}${kind}`;
+      baseName = `${ringBase}${mult}${kind}`;
     }
   }
 
