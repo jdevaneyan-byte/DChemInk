@@ -679,8 +679,19 @@ function matchHeterocycle(
   const n = ring.size;
   const elements = ring.atoms.map((idx) => atomById.get(idx)!.element);
 
+  // All non-aromatic HETERO_TABLE entries are SATURATED parents (oxane, oxolane,
+  // piperidine, …). A non-aromatic ring that still carries a ring double bond
+  // (e.g. 2H-pyran, 2,3-dihydrofuran) is NOT one of them — it must not match and
+  // then have its unsaturation mis-expressed as "oxa-2,4-diene". Such partially
+  // unsaturated heterocycles are handled by the Hantzsch–Widman generator.
+  const ringSet = new Set(ring.atoms);
+  const ringHasDoubleBond = graph.bonds.some(
+    (b) => b.order === 2 && ringSet.has(b.from) && ringSet.has(b.to),
+  );
+
   for (const entry of HETERO_TABLE) {
     if (entry.size !== n || entry.aromatic !== ring.aromatic) continue;
+    if (!entry.aromatic && ringHasDoubleBond) continue; // saturated entry vs unsaturated ring
 
     // Try to match any elementSeq against the ring (rotations + both directions)
     for (const seq of entry.elementSeqs) {

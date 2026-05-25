@@ -953,6 +953,28 @@ function nameAromaticRingCarbonyl(
  * For Task 2: bare ring systems (no substituents, no functional groups).
  * Task 3 will add substituents + functional groups.
  */
+/**
+ * A fused system matches the curated (aromatic/mancude) table only when every
+ * ring CARBON carries an incident ring double bond. Heteroatoms may be
+ * lone-pair donors (pyrrole N, furan O) without a double bond. A partially
+ * hydrogenated system (tetralin, indane, 1-methyltetralin) has sp3 ring carbons
+ * with no ring double bond → not mancude → must not match the aromatic table
+ * (would yield e.g. "naphthalene" for tetralin). Such systems are named by the
+ * hydrogenated-fused path or declined.
+ */
+function isFullyMancude(graph: MolGraph, ringAtoms: Set<number>): boolean {
+  const carbonHasDouble = new Map<number, boolean>();
+  for (const a of graph.atoms) if (a.element === "C" && ringAtoms.has(a.index)) carbonHasDouble.set(a.index, false);
+  for (const b of graph.bonds) {
+    if (b.order === 2 && ringAtoms.has(b.from) && ringAtoms.has(b.to)) {
+      if (carbonHasDouble.has(b.from)) carbonHasDouble.set(b.from, true);
+      if (carbonHasDouble.has(b.to)) carbonHasDouble.set(b.to, true);
+    }
+  }
+  for (const [, hasDouble] of carbonHasDouble) if (!hasDouble) return false;
+  return true;
+}
+
 function nameFusedRingSystem(
   graph: MolGraph,
   ringSys: import("./ring").RingSystemInfo,
@@ -983,11 +1005,8 @@ function nameFusedRingSystem(
   // Saturation guard: our curated fused table only covers (partially) aromatic systems.
   // A fully saturated fused ring (e.g. decalin) has no ring double bonds → decline to avoid
   // false isomorphism matches against aromatic entries (which share the same degree sequence).
-  const hasRingDoubleBond = graph.bonds.some(
-    b => b.order === 2 && ringSys.atoms.has(b.from) && ringSys.atoms.has(b.to)
-  );
-  if (!hasRingDoubleBond) {
-    return { name: null, status: "unsupported", reason: "fused ring system — fully saturated fused ring not in curated table" };
+  if (!isFullyMancude(graph, ringSys.atoms)) {
+    return { name: null, status: "unsupported", reason: "saturated/partially-hydrogenated fused ring not in curated table — Tier 4 (Stage 5)" };
   }
 
   // Pure fused ring (no exocyclic substituents): look up in curated table
@@ -1016,11 +1035,10 @@ function nameFusedRingWithSubs(
   const ringAtoms = ringSys.atoms;
 
   // Saturation guard: curated fused table only covers aromatic/mancude systems.
-  const hasRingDoubleBond = graph.bonds.some(
-    b => b.order === 2 && ringAtoms.has(b.from) && ringAtoms.has(b.to)
-  );
-  if (!hasRingDoubleBond) {
-    return { name: null, status: "unsupported", reason: "fused ring system — fully saturated fused ring not in curated table" };
+  // Partially hydrogenated fused systems (tetralin, indane) have sp3 ring carbons
+  // and must not be matched as their aromatic parent (e.g. tetralin→"naphthalene").
+  if (!isFullyMancude(graph, ringAtoms)) {
+    return { name: null, status: "unsupported", reason: "saturated/partially-hydrogenated fused ring not in curated table — Tier 4 (Stage 5)" };
   }
 
   // Perceive functional groups
