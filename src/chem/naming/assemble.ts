@@ -28,14 +28,22 @@ export function stereoDescriptor(
     stereoAtoms?: Map<number, "R" | "S">;
     stereoBonds?: { a: number; b: number; label: "E" | "Z" }[];
     specifiedStereoCount?: number;
+    hasUndefinedStereo?: boolean;
   },
   locantOf: (atomIndex: number) => number | undefined,
+  // Number of ene+yne unsaturations in the parent. A lone E/Z descriptor may omit
+  // its locant ONLY when this is exactly 1 (e.g. "(E)-but-2-ene"); with several
+  // double bonds the locant is required to say which one is E/Z ("(5Z)-…diene").
+  parentUnsaturationCount = 1,
 ): string | null {
   // Authoritative total = ALL specified stereo (incl. pseudoasymmetric / cis-trans
   // that carry no uppercase CIP label). If we can't place every one, decline.
   const total = graph.specifiedStereoCount ??
     ((graph.stereoAtoms?.size ?? 0) + (graph.stereoBonds?.length ?? 0));
   if (total === 0) return "";
+  // A specified center next to an unassignable "(?)" center → defined R/S labels
+  // are unreliable (CIP depends on the undefined neighbour) → decline.
+  if (graph.hasUndefinedStereo) return null;
 
   const items: { locant: number; label: string; isBond: boolean }[] = [];
   if (graph.stereoAtoms) {
@@ -58,7 +66,7 @@ export function stereoDescriptor(
 
   items.sort((x, y) => x.locant - y.locant || (x.label < y.label ? -1 : 1));
 
-  if (items.length === 1 && items[0].isBond) return `(${items[0].label})-`;
+  if (items.length === 1 && items[0].isBond && parentUnsaturationCount <= 1) return `(${items[0].label})-`;
   return `(${items.map((it) => `${it.locant}${it.label}`).join(",")})-`;
 }
 

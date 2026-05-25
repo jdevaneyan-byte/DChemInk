@@ -35,6 +35,11 @@ export interface MolGraph {
    * label. When this exceeds the descriptors we can emit, naming declines.
    */
   specifiedStereoCount?: number;
+  /**
+   * True when RDKit reports an unassignable "(?)" potential stereocenter. With
+   * specified stereo present, the defined R/S labels are unreliable → decline.
+   */
+  hasUndefinedStereo?: boolean;
 }
 export interface NameResult {
   name: string | null;

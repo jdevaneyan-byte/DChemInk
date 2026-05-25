@@ -39,6 +39,25 @@ describe("bare styrene retained name preserved", () => {
   it("styrene", () => expect(name("C=Cc1ccccc1")).toBe("styrene"));
 });
 
+describe("precision guards exposed by the alkenyl/diene work", () => {
+  // Multiple double bonds but only one stereo-defined → the E/Z locant MUST be
+  // cited to say which bond it is (was wrongly omitted as "(Z)-…diene").
+  it("(5Z)-5-methylhepta-3,5-dienoic acid (E/Z locant cited with multiple enes)", () => {
+    expect(name("C/C(C=CC(C(=O)O))=C/C")).toBe("(5Z)-5-methylhepta-3,5-dienoic acid");
+  });
+  it("(5E)-1-methoxyhepta-2,5-diene", () => {
+    expect(name("C(C=CC(OC))/C=C/C")).toBe("(5E)-1-methoxyhepta-2,5-diene");
+  });
+  it("single double bond still omits the E/Z locant", () => {
+    expect(name("C/C=C/C")).toBe("(E)-but-2-ene");
+  });
+  // A defined stereocentre next to an unassignable "(?)" centre → decline
+  // (defined R/S labels are unreliable; OPSIN itself cannot assign CIP).
+  it("2,6-dimethylcyclohexanol (pseudoasymmetric, undefined center) declines", () => {
+    expect(status("C[C@@H]1CCCC(C)[C@@H]1O")).toBe("unsupported");
+  });
+});
+
 describe("cumulated dienes (allenes) name; exocyclic methylidene declines", () => {
   it("(propa-1,2-dien-1-yl)cyclohexane (allenyl substituent)", () => {
     expect(name("C=C=CC1CCCCC1")).toBe("(propa-1,2-dien-1-yl)cyclohexane");

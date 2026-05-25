@@ -96,7 +96,13 @@ export function graphFromSmiles(smiles: string): MolGraph | null {
       m.atoms.filter((a) => a.stereo === "cw" || a.stereo === "ccw").length +
       m.bonds.filter((b) => b.stereo === "cis" || b.stereo === "trans").length;
 
-    return { atoms, bonds, fragmentCount, stereoAtoms, stereoBonds, specifiedStereoCount };
+    // A "(?)" CIP tag marks a potential stereocenter RDKit could not assign
+    // (undefined configuration / pseudoasymmetric). When such a centre coexists
+    // with SPECIFIED stereo, the defined R/S labels are unreliable (their CIP
+    // depends on the undefined neighbour) — the engine declines (no wrong names).
+    const hasUndefinedStereo = undefinedStereo(mol);
+
+    return { atoms, bonds, fragmentCount, stereoAtoms, stereoBonds, specifiedStereoCount, hasUndefinedStereo };
   } finally {
     mol.delete();
   }
@@ -140,4 +146,17 @@ function extractStereo(mol: { get_stereo_tags?: () => string }): {
     stereoAtoms: stereoAtoms.size > 0 ? stereoAtoms : undefined,
     stereoBonds: stereoBonds.length > 0 ? stereoBonds : undefined,
   };
+}
+
+/** True when get_stereo_tags reports any unassignable "(?)" stereocenter. */
+function undefinedStereo(mol: { get_stereo_tags?: () => string }): boolean {
+  if (typeof mol.get_stereo_tags !== "function") return false;
+  try {
+    const tags = JSON.parse(mol.get_stereo_tags()) as StereoTags;
+    const atomQ = (tags.CIP_atoms ?? []).some(([, raw]) => cipLabel(raw) === "?");
+    const bondQ = (tags.CIP_bonds ?? []).some(([, , raw]) => cipLabel(raw) === "?");
+    return atomQ || bondQ;
+  } catch {
+    return false;
+  }
 }

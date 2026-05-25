@@ -1728,7 +1728,7 @@ function nameSpiroRingSystem(
     finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), spiroParent);
   }
 
-  const spiroStereo = stereoDescriptor(graph, (idx) => locantOf.get(idx));
+  const spiroStereo = stereoDescriptor(graph, (idx) => locantOf.get(idx), unsatBonds.length);
   if (spiroStereo === null) {
     return { name: null, status: "unsupported", reason: "stereodescriptor not expressible on this spiro system — not yet supported" };
   }
@@ -2036,7 +2036,7 @@ function nameBridgedRingSystem(
     finalName = joinPrefixParent(buildVbPrefix(ringNameSubs), vbParent);
   }
 
-  const vbStereo = stereoDescriptor(graph, (idx) => locantOf.get(idx));
+  const vbStereo = stereoDescriptor(graph, (idx) => locantOf.get(idx), unsatBonds.length);
   if (vbStereo === null) {
     return { name: null, status: "unsupported", reason: "stereodescriptor not expressible on this bridged system — not yet supported" };
   }
@@ -2668,7 +2668,7 @@ function nameMoleculeRing(graph: MolGraph): NameResult {
     retainedAromatic,
   });
 
-  const stereoPfx = stereoDescriptor(graph, (idx) => locantOf.get(idx));
+  const stereoPfx = stereoDescriptor(graph, (idx) => locantOf.get(idx), unsatBonds.length);
   if (stereoPfx === null) {
     return { name: null, status: "unsupported", reason: "stereodescriptor not expressible on this ring system — not yet supported" };
   }
@@ -3055,7 +3055,7 @@ function nameMoleculeRingAsSubstituent(
   const stereoPfx = stereoDescriptor(graph, (idx) => {
     const p = chain.indexOf(idx);
     return p >= 0 ? p + 1 : undefined;
-  });
+  }, doubles.length + triples.length);
   if (stereoPfx === null) {
     return { name: null, status: "unsupported", reason: "stereodescriptor not expressible on a ring substituent — not yet supported" };
   }
@@ -3638,7 +3638,7 @@ function nameMoleculeImpl(graph: MolGraph): NameResult {
     const stereoPfx = stereoDescriptor(graph, (idx) => {
       const p = chain.indexOf(idx);
       return p >= 0 ? p + 1 : undefined;
-    });
+    }, doubles.length + triples.length);
     if (stereoPfx === null) {
       return { name: null, status: "unsupported", reason: "stereodescriptor on an atom outside the main chain — not yet supported" };
     }
