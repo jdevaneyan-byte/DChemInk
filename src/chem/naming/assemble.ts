@@ -3,6 +3,61 @@ import { parentStem, multiplierPrefix } from "./graph";
 
 export type SuffixKind = "ol" | "al" | "one" | "amine" | "amide" | "nitrile" | "oic acid";
 
+/**
+ * Build the front stereodescriptor for a name, e.g. "(E)-", "(2R)-", "(2E,4Z)-",
+ * "(2R,3S)-". Returns "" when no in-scope stereo elements exist.
+ *
+ * `locantOf(atomIndex)` returns the parent locant of an atom, or undefined when
+ * the atom is not part of the parent numbering (that stereo element is skipped).
+ *
+ * Citation rule (PubChem-verified): a lone E/Z double bond omits its locant
+ * ("(E)-but-2-ene"); a lone R/S center cites it ("(2R)-butan-2-ol"); and any
+ * combination of ≥2 stereo elements cites every locant, sorted ascending
+ * ("(2E,4Z)-hexa-2,4-diene", "(2R,3S)-butane-2,3-diol").
+ *
+ * Returns:
+ *  - ""    when the molecule has no specified stereo,
+ *  - null  when there IS specified stereo but some element cannot be placed in
+ *          the parent numbering (e.g. a stereocenter on a branch). The caller
+ *          must DECLINE rather than emit a name that silently drops stereo
+ *          (which would denote a less-specific structure — no wrong names),
+ *  - the "(...)-" prefix when every specified element was placed.
+ */
+export function stereoDescriptor(
+  graph: {
+    stereoAtoms?: Map<number, "R" | "S">;
+    stereoBonds?: { a: number; b: number; label: "E" | "Z" }[];
+  },
+  locantOf: (atomIndex: number) => number | undefined,
+): string | null {
+  const total = (graph.stereoAtoms?.size ?? 0) + (graph.stereoBonds?.length ?? 0);
+  if (total === 0) return "";
+
+  const items: { locant: number; label: string; isBond: boolean }[] = [];
+  if (graph.stereoAtoms) {
+    for (const [idx, label] of graph.stereoAtoms) {
+      const loc = locantOf(idx);
+      if (loc !== undefined) items.push({ locant: loc, label, isBond: false });
+    }
+  }
+  if (graph.stereoBonds) {
+    for (const { a, b, label } of graph.stereoBonds) {
+      const la = locantOf(a);
+      const lb = locantOf(b);
+      if (la !== undefined && lb !== undefined) {
+        items.push({ locant: Math.min(la, lb), label, isBond: true });
+      }
+    }
+  }
+  // Some specified stereo could not be located in the parent numbering → decline.
+  if (items.length < total) return null;
+
+  items.sort((x, y) => x.locant - y.locant || (x.label < y.label ? -1 : 1));
+
+  if (items.length === 1 && items[0].isBond) return `(${items[0].label})-`;
+  return `(${items.map((it) => `${it.locant}${it.label}`).join(",")})-`;
+}
+
 export interface SuffixSpec {
   kind: SuffixKind;
   locants: number[]; // ascending

@@ -2,7 +2,7 @@
 import type { MolGraph, NameResult } from "./graph";
 import { buildCarbonGraph, ccOrder, selectPrincipalChain, type CarbonGraph } from "./chain";
 import { nameSubstituent } from "./substituent";
-import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, type SuffixKind, type Sub } from "./assemble";
+import { assembleName, acylName, acylHalideName, esterName, anhydrideName, assembleRingName, stereoDescriptor, type SuffixKind, type Sub } from "./assemble";
 import { perceiveGroups, principalKind, SENIORITY, type Group, type GroupKind } from "./functionalGroups";
 import { perceiveRing, nameRing, ringSubstituentName, perceiveRingSystem, nameFusedRing, detectBridgedBicyclic, nameVonBaeyer, isAdamantane, detectMonoSpiro, nameSpiro, type RingInfo } from "./ring";
 
@@ -3493,7 +3493,14 @@ export function nameMolecule(graph: MolGraph): NameResult {
       subs,
       suffix,
     });
-    return { name: nameTxt, status: "named", parentChain: chain };
+    const stereoPfx = stereoDescriptor(graph, (idx) => {
+      const p = chain.indexOf(idx);
+      return p >= 0 ? p + 1 : undefined;
+    });
+    if (stereoPfx === null) {
+      return { name: null, status: "unsupported", reason: "stereodescriptor on an atom outside the main chain — not yet supported" };
+    }
+    return { name: stereoPfx + nameTxt, status: "named", parentChain: chain };
   } catch (e) {
     return { name: null, status: "error", reason: e instanceof Error ? e.message : String(e) };
   }
